@@ -1080,15 +1080,15 @@ void CmdSetBlendConstants (uint chunkIndex, uint64_t threadID, uint64_t timestam
 	nameSer.Clear();
 	remapper.SetCurrentPos( chunkIndex );
 	before << "	{\n";
+	before << indent << "StaticArray<float,4> blendConstants{ ";
+	for (uint i = 0; i < 4; ++i) {
+		before << (i ? ", " : "") << FloatToString(blendConstants[i]);
+	}
+	before << " };\n";
 	result << indent << "app.vkCmdSetBlendConstants( \n";
 	result << indent << "		/*commandBuffer*/ " << remapper( VK_OBJECT_TYPE_COMMAND_BUFFER, commandBuffer );
 	result << ",\n";
-	result << indent << "		/*blendConstants*/ " << "StaticArray<float,4>{ ";
-	for (uint i = 0; i < 4; ++i) {
-		result << (i ? ", " : "") << FloatToString(blendConstants[i]);
-	}
-	result << " }";
-	result << " );\n";
+	result << indent << "		/*blendConstants*/ blendConstants.data() );\n";
 	result << "	}\n";
 	FlushCommandBuffer( commandBuffer );
 }
@@ -2028,23 +2028,6 @@ void CmdDebugMarkerEndEXT (uint chunkIndex, uint64_t threadID, uint64_t timestam
 	result << " );\n";
 	result << "	}\n";
 	FlushCommandBuffer( commandBuffer );
-}
-
-void DebugMarkerSetObjectNameEXT (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkDebugMarkerObjectNameInfoEXT * pNameInfo) override
-{
-	nameSer.Clear();
-	remapper.SetCurrentPos( chunkIndex );
-	before << "	{\n";
-	if ( pNameInfo ) {
-		before << SerializeStruct( BitCast<VkBaseInStructure const*>(pNameInfo), nameSer, remapper, indent );
-	}
-	result << indent << "VK_CALL( app.vkDebugMarkerSetObjectNameEXT( \n";
-	result << indent << "		/*device*/ " << remapper( VK_OBJECT_TYPE_DEVICE, device );
-	result << ",\n";
-	result << indent << "		/*pNameInfo*/ " << nameSer.GetPtr(pNameInfo);
-	result << " ));\n";
-	result << "	}\n";
-	FlushGlobal();
 }
 
 void CreateSwapchainKHR (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkSwapchainCreateInfoKHR * pCreateInfo, const VkAllocationCallbacks * pAllocator, VkSwapchainKHR * pSwapchain) override

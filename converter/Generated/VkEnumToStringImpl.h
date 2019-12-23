@@ -3611,6 +3611,13 @@
 	{
 		if ( bits == 0 )
 			return "0";
+
+		if ( bits == VK_SHADER_STAGE_ALL_GRAPHICS )
+			return "VK_SHADER_STAGE_ALL_GRAPHICS";
+
+		if ( bits == VK_SHADER_STAGE_ALL )
+			return "VK_SHADER_STAGE_ALL";
+
 		String  result;
 		for (VkShaderStageFlags t = 1; t < VK_SHADER_STAGE_FLAG_BITS_MAX_ENUM; t <<= 1)
 		{

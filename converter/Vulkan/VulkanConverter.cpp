@@ -36,15 +36,21 @@ namespace RDE
 		using Queues_t			= HashMap< VkQueue, EQueueFamily >;		// queue family index
 		using QueueFamilies_t	= HashMap< EQueueFamily, QueueFamilyData >;
 		using CmdPools_t		= HashMap< VkCommandPool, EQueueFamily >;
+		
+		using SignaledFences_t		= HashSet< VkResourceID >;
+		using SignaledSemaphores_t	= HashSet< VkResourceID >;
+		using SignaledEvents_t		= HashSet< VkResourceID >;
 
 		struct CmdBufferData
 		{
-			VkRenderPass	currRenderPass	= VK_NULL_HANDLE;
-			EQueueFamily	familyIndex		= Default;
-			String			str;
-			String			before;
-			uint			renderPassCount	= 0;
-			size_t			renderPassBegin	= UMax;
+			VkRenderPass		currRenderPass	= VK_NULL_HANDLE;
+			EQueueFamily		familyIndex		= Default;
+			String				str;
+			String				before;
+			uint				renderPassCount	= 0;
+			size_t				renderPassBegin	= UMax;
+			SignaledEvents_t	waitingEvents;
+			SignaledEvents_t	signaledEvents;
 		};
 		using CmdBuffers_t	= HashMap< VkCommandBuffer, CmdBufferData >;
 		
@@ -86,20 +92,32 @@ namespace RDE
 
 		using Allocator_t	= LinearAllocator<>;
 
-		using QueueProps_t	= Array<VkQueueFamilyProperties>;
+		struct DeviceInfo
+		{
+			Array<VkQueueFamilyProperties>		queueProps;
+			uint32_t							memIdxMap [VK_MAX_MEMORY_TYPES] = {};
+			VkPhysicalDeviceMemoryProperties	memProps		= {};
+			VkPhysicalDeviceProperties			physProps		= {};
+			VkPhysicalDeviceFeatures			physFeatures	= {};
+		};
 
-		using SignaledFences_t		= HashSet< VkResourceID >;
-		using SignaledSemaphores_t	= HashSet< VkResourceID >;
+		using DeviceProps_t			= HashMap< VkPhysicalDevice, DeviceInfo >;
 
 		using ImageLayouts_t		= HashMap< VkResourceID, ImageLayouts >;
 		using SwapchainImages_t		= FixedArray< VkResourceID, 8 >;
 
-		struct DSLayoutInfo
+		struct DescriptorSetInfo
 		{
-			Array<VkDescriptorSetLayoutBinding>		bindings;
+			Array<VkWriteDescriptorSet>		write;
+			uint							bindCount = 0;
 		};
-		using DSLayoutInfoMap_t		= HashMap< VkDescriptorSetLayout, DSLayoutInfo >;
-		using DescrSetInfoMap_t		= HashMap< VkDescriptorSet, DSLayoutInfo* >;
+		using DescriptorInit_t		= HashMap< VkDescriptorSet, DescriptorSetInfo >;
+
+		struct DescriptorTemplateInfo
+		{
+			Array<VkDescriptorUpdateTemplateEntry>	entries;
+		};
+		using DSTemplateMap_t		= HashMap< VkDescriptorUpdateTemplate, DescriptorTemplateInfo >;
 
 
 	// variables
@@ -112,6 +130,8 @@ namespace RDE
 		BufferMap_t				_bufferMap;
 		MemoryMap_t				_memoryMap;
 		ImageLayouts_t			_initialLayouts;
+		DescriptorInit_t		_initialDS;
+		DSTemplateMap_t			_dsTemplates;
 
 		String					_initSrc;
 		String					_initFrameSrc;
@@ -128,9 +148,7 @@ namespace RDE
 		SignaledFences_t		_signaledFences;
 		SignaledFences_t		_initialySignaledFences;
 		SignaledSemaphores_t	_signaledSemaphores;
-
-		DSLayoutInfoMap_t		_dsLayoutMap;
-		DescrSetInfoMap_t		_descSetMap;
+		SignaledEvents_t		_signaledEvents;
 
 		String					_frameSrcBefore;
 		String					_frameSrc;
@@ -139,14 +157,10 @@ namespace RDE
 		VkInstance				_vkInstance			= VK_NULL_HANDLE;
 		VkPhysicalDevice		_vkPhysicalDevice	= VK_NULL_HANDLE;
 		VkDevice				_vkLogicalDevice	= VK_NULL_HANDLE;
-		String					_deviceName;
 		uint32_t				_apiVersion			= 0;
 		EQueueFamily			_graphicsQueue		= Default;
 
-		uint32_t							_memIdxMap [VK_MAX_MEMORY_TYPES] = {};
-		VkPhysicalDeviceMemoryProperties	_memProps = {};
-
-		QueueProps_t			_queueProps;
+		DeviceProps_t			_deviceProps;
 
 		FS::path				_folder;
 		FS::path				_shaderFolder;
@@ -156,6 +170,7 @@ namespace RDE
 		bool					_captureStarted	= false;
 
 		Allocator_t				_allocator;
+		Allocator_t				_initialDSAllocator;
 
 
 	// methods
@@ -170,6 +185,7 @@ namespace RDE
 
 		void RemoveUnusedSwapchainImages ();
 		void AddInitialLayouts ();
+		void InitDescriptorSets ();
 		void ResetToInitial ();
 		
 		void OnOpenCapture (const FS::path &filename) override;
@@ -227,12 +243,21 @@ namespace RDE
 		void CreateGraphicsPipelines (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkPipelineCache pipelineCache, uint32_t createInfoCount, const VkGraphicsPipelineCreateInfo * pCreateInfos, const VkAllocationCallbacks * pAllocator, VkPipeline * pPipelines) override;
 		void CreateComputePipelines (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkPipelineCache pipelineCache, uint32_t createInfoCount, const VkComputePipelineCreateInfo * pCreateInfos, const VkAllocationCallbacks * pAllocator, VkPipeline * pPipelines) override;
 		void CreateEvent (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkEventCreateInfo * pCreateInfo, const VkAllocationCallbacks * pAllocator, VkEvent * pEvent) override;
+		void SetEvent (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkEvent event) override;
+		void ResetEvent (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkEvent event) override;
+		void GetEventStatus (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkEvent event) override;
+		void CmdSetEvent (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkCommandBuffer commandBuffer, VkEvent event, VkPipelineStageFlags stageMask) override;
+		void CmdResetEvent (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkCommandBuffer commandBuffer, VkEvent event, VkPipelineStageFlags stageMask) override;
+		void CmdWaitEvents (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkCommandBuffer commandBuffer, uint32_t eventCount, const VkEvent * pEvents, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask, uint32_t memoryBarrierCount, const VkMemoryBarrier * pMemoryBarriers, uint32_t bufferMemoryBarrierCount, const VkBufferMemoryBarrier * pBufferMemoryBarriers, uint32_t imageMemoryBarrierCount, const VkImageMemoryBarrier * pImageMemoryBarriers) override;
 		void CreateQueryPool (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkQueryPoolCreateInfo * pCreateInfo, const VkAllocationCallbacks * pAllocator, VkQueryPool * pQueryPool) override;
-		void CreateDescriptorUpdateTemplate (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkDescriptorUpdateTemplateCreateInfo * pCreateInfo, const VkAllocationCallbacks * pAllocator, VkDescriptorUpdateTemplate * pDescriptorUpdateTemplate) override;
 		void CreateSamplerYcbcrConversion (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkSamplerYcbcrConversionCreateInfo * pCreateInfo, const VkAllocationCallbacks * pAllocator, VkSamplerYcbcrConversion * pYcbcrConversion) override;
 		void CreateRenderPass2KHR (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkRenderPassCreateInfo2KHR * pCreateInfo, const VkAllocationCallbacks * pAllocator, VkRenderPass * pRenderPass) override;
 		void AllocateDescriptorSets (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkDescriptorSetAllocateInfo * pAllocateInfo, VkDescriptorSet * pDescriptorSets) override;
 		void FlushMappedMemoryRanges (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, uint32_t memoryRangeCount, const VkMappedMemoryRange * pMemoryRanges, BytesU mappedDataSize, ContentID mappedData) override;
+		void CmdBindDescriptorSets (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkCommandBuffer commandBuffer, VkPipelineBindPoint pipelineBindPoint, VkPipelineLayout layout, uint32_t firstSet, uint32_t descriptorSetCount, const VkDescriptorSet * pDescriptorSets, uint32_t dynamicOffsetCount, const uint32_t * pDynamicOffsets) override;
+		void DebugMarkerSetObjectNameEXT (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkResourceID resId, StringView name) override;
+		void CreateDescriptorUpdateTemplate (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkDescriptorUpdateTemplateCreateInfo * pCreateInfo, const VkAllocationCallbacks * pAllocator, VkDescriptorUpdateTemplate * pDescriptorUpdateTemplate) override;
+		void UpdateDescriptorSetWithTemplate (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkDescriptorSet descriptorSet, VkDescriptorUpdateTemplate descriptorUpdateTemplate, ArrayView<VkWriteDescriptorSet> data) override;
 		
 		ND_ String _ConvertLayouts (const ImageLayouts &layouts);
 
@@ -372,10 +397,11 @@ namespace RDE
 
 			_globalSrcAfter
 				<< "\tInitialize( app );\n\n"
-				<< "\tfor (uint i = 0; i < 10; ++i)\n"
+				<< "\tfor (uint i = 0;; ++i)\n"
 				<< "\t{\n"
 				<< "\t	FG_LOGI( \"frame: \" + std::to_string(i) );\n"
-				<< "\t	app.BeginFrame();\n"
+				<< "\t	if ( not app.BeginFrame() )\n"
+				<< "\t		break;\n"
 				<< "\t	Frame( app );\n"
 				<< "\t	app.EndFrame( EQueueFamily(" << ToString(img_info.lastQueue) << ") );\n"	// TODO: remap queue family
 				<< "\t	ResetFrame( app );\n"
@@ -408,7 +434,10 @@ namespace RDE
 			str << "target_include_directories( " << app_name << " PRIVATE \"" RDE_APP_PATH << "\" )\n"
 				<< "target_include_directories( " << app_name << " PRIVATE \"" RDE_FRAMEGRAPH_PATH << "\" )\n"
 				<< "target_include_directories( " << app_name << " PRIVATE \"" RDE_FRAMEGRAPH_EXTERNAL_PATH << "\" )\n"
-				<< "target_link_libraries( " << app_name << " \"STL\" \"VulkanLoader\" \"Framework\" \"Application\" )";
+				<< "target_link_libraries( " << app_name << " \"STL\" \"VulkanLoader\" \"Framework\" \"Application\" )\n"
+				<< "if (MSVC)\n"
+				<< "	set_target_properties( " << app_name << " PROPERTIES LINK_FLAGS \"/STACK:10000000,10000000\" )\n"
+				<< "endif ()\n";
 			
 			FileWStream  file{ FS::path{_folder}.append( "CMakeLists.txt" )};
 			CHECK( file.IsOpen() );
@@ -435,38 +464,42 @@ namespace RDE
 */
 	void VulkanFnToCpp2::ResetToInitial ()
 	{
-		for (auto initial : _initialySignaledFences)
+		// reset fences
 		{
-			if ( _signaledFences.erase( initial ))
-				continue;
+			for (auto initial : _initialySignaledFences)
+			{
+				if ( _signaledFences.erase( initial ))
+					continue;
 
-			// TODO: set signaled state
-			CHECK(false);
-		}
+				// TODO: set signaled state
+				CHECK(false);
+			}
 
-		String	str;
-		for (auto fence : _signaledFences)
-		{
-			str << indent << "\t" << remapper.GetAliveResource( VK_OBJECT_TYPE_FENCE, fence )
-				<< (fence == *(--_signaledFences.end()) ? "\n" : ",\n");
-		}
+			String	str;
+			for (auto fence : _signaledFences)
+			{
+				str << indent << "\t" << remapper.GetAliveResource( VK_OBJECT_TYPE_FENCE, fence )
+					<< (fence == *(--_signaledFences.end()) ? "\n" : ",\n");
+			}
 
-		if ( str.size() )
-		{
-			_frameResetSrc << "\t{\n"
-				<< indent << "const VkFence fences[] = {\n" << str
-				<< indent << "};\n\n"
-				<< indent << "VK_CALL( app.vkWaitForFences( \n"
-				<< indent << "		/*device*/ " << remapper( VK_OBJECT_TYPE_DEVICE, _vkLogicalDevice ) << ",\n"
-				<< indent << "		/*fenceCount*/ " << IntToString(uint(_signaledFences.size())) << ",\n"
-				<< indent << "		/*pFences*/ fences,\n"
-				<< indent << "		/*waitAll*/ true,\n"
-				<< indent << "		/*timeout*/ " << IntToString(uint64_t(UMax)) << " ));\n"
-				<< "\t}\n";
-		}
+			if ( str.size() )
+			{
+				_frameResetSrc << "\t{\n"
+					<< indent << "const VkFence fences[] = {\n" << str
+					<< indent << "};\n\n"
+					<< indent << "VK_CALL( app.vkWaitForFences( \n"
+					<< indent << "		/*device*/ " << remapper( VK_OBJECT_TYPE_DEVICE, _vkLogicalDevice ) << ",\n"
+					<< indent << "		/*fenceCount*/ " << IntToString(uint(_signaledFences.size())) << ",\n"
+					<< indent << "		/*pFences*/ fences,\n"
+					<< indent << "		/*waitAll*/ true,\n"
+					<< indent << "		/*timeout*/ " << IntToString(uint64_t(UMax)) << " ));\n"
+					<< "\t}\n";
+			}
 		
-		_signaledFences = _initialySignaledFences;
+			_signaledFences = _initialySignaledFences;
+		}
 
+		// reset semaphores
 		if ( _signaledSemaphores.size() )
 		{
 			_frameResetSrc
@@ -516,6 +549,24 @@ namespace RDE
 				<< "\t}\n";
 
 			_signaledSemaphores.clear();
+		}
+
+		// reset events
+		if ( _signaledEvents.size() )
+		{
+			_frameResetSrc << "\t{\n";
+
+			for (auto& ev : _signaledEvents)
+			{
+				_frameResetSrc
+					<< indent << "VK_CALL( app.vkResetEvent( \n"
+					<< indent << "		/*device*/ " << remapper( VK_OBJECT_TYPE_DEVICE, _vkLogicalDevice ) << ",\n"
+					<< indent << "		/*event*/ " << remapper( VK_OBJECT_TYPE_EVENT, ev ) << " ));\n";
+			}
+
+			_frameResetSrc << "\t}\n";
+
+			_signaledEvents.clear();
 		}
 	}
 	
@@ -678,6 +729,48 @@ namespace RDE
 		}
 		_initialLayouts.clear();
 	}
+	
+/*
+=================================================
+	InitDescriptorSets
+=================================================
+*/
+	void VulkanFnToCpp2::InitDescriptorSets ()
+	{
+		for (auto&[ds, info] : _initialDS)
+		{
+			if ( info.bindCount == 0 )
+				continue;
+
+			auto&	slots = info.write;
+
+			nameSer.Clear();
+			remapper.SetCurrentPos( UMax );
+			before << "\t{\n";
+		
+			const String arr_name = nameSer.MakeUnique( slots.data(), "descriptorWrites"s, "writeDescriptorSet"s );
+			before << indent << "VkWriteDescriptorSet  " << arr_name << "[" << IntToString(uint(slots.size())) << "] = {};\n";
+		
+			for (size_t i = 0; i < slots.size(); ++i) {
+				Serialize2_VkWriteDescriptorSet( &slots[i], String(arr_name) << "[" << IntToString(i) << "]", nameSer, remapper, indent, INOUT result, INOUT before );
+			}
+
+			result << indent << "app.vkUpdateDescriptorSets( \n";
+			result << indent << "		/*device*/ " << remapper( VK_OBJECT_TYPE_DEVICE, _vkLogicalDevice ) << ",\n";
+			result << indent << "		/*descriptorWriteCount*/ " << IntToString(uint(slots.size())) << ",\n";
+			result << indent << "		/*pDescriptorWrites*/ " << nameSer.Get( slots.data() ) << ",\n";
+			result << indent << "		/*descriptorCopyCount*/ 0,\n";
+			result << indent << "		/*pDescriptorCopies*/ null );\n";
+			result << "\t}\n";
+			
+			_initSrc << before << result;
+			before.clear();
+			result.clear();
+		}
+
+		_initialDS.clear();
+		_initialDSAllocator.Discard();
+	}
 
 /*
 =================================================
@@ -801,42 +894,33 @@ namespace RDE
 	{
 		CHECK( not _captureStarted );
 
-		nameSer.Clear();
-		remapper.SetCurrentPos( chunkIndex );
-		before << "\t{\n";
+		auto&	dst_slots = _initialDS[ slots.front().dstSet ];
 
-		const String arr_name = nameSer.MakeUnique( slots.data(), "descriptorWrites"s, "writeDescriptorSet"s );
-		before << indent << "VkWriteDescriptorSet  " << arr_name << "[" << IntToString(uint(slots.size())) << "] = {};\n";
-		
-		for (size_t i = 0; i < slots.size(); ++i)
+		for (auto& src : slots)
 		{
-			auto	iter = _descSetMap.find( slots[i].dstSet );
-			CHECK_ERR( iter != _descSetMap.end(), void());
+			CHECK( src.dstSet == slots.front().dstSet );
 
-			bool	found = false;
-			for (auto& ds : iter->second->bindings)
+			auto&	dst = dst_slots.write.emplace_back();
+			dst = src;
+
+			if ( src.pBufferInfo )
 			{
-				if ( ds.binding == slots[i].dstBinding )
-				{
-					const_cast<VkWriteDescriptorSet &>( slots[i] ).descriptorType = ds.descriptorType;
-					found = true;
-					break;
-				}
+				dst.pBufferInfo = _initialDSAllocator.Alloc<VkDescriptorBufferInfo>( dst.descriptorCount );
+				std::memcpy( const_cast<VkDescriptorBufferInfo *>(dst.pBufferInfo), src.pBufferInfo, sizeof(VkDescriptorBufferInfo)*dst.descriptorCount );
 			}
-			CHECK_ERR( found, void());
 
-			Serialize2_VkWriteDescriptorSet( &slots[i], String(arr_name) << "[" << IntToString(i) << "]", nameSer, remapper, indent, INOUT result, INOUT before );
+			if ( src.pImageInfo )
+			{
+				dst.pImageInfo = _initialDSAllocator.Alloc<VkDescriptorImageInfo>( dst.descriptorCount );
+				std::memcpy( const_cast<VkDescriptorImageInfo *>(dst.pImageInfo), src.pImageInfo, sizeof(VkDescriptorImageInfo)*dst.descriptorCount );
+			}
+
+			if ( src.pTexelBufferView )
+			{
+				dst.pTexelBufferView = _initialDSAllocator.Alloc<VkBufferView>( dst.descriptorCount );
+				std::memcpy( const_cast<VkBufferView *>(dst.pTexelBufferView), src.pTexelBufferView, sizeof(VkBufferView)*dst.descriptorCount );
+			}
 		}
-
-		result << indent << "app.vkUpdateDescriptorSets( \n";
-		result << indent << "		/*device*/ " << remapper( VK_OBJECT_TYPE_DEVICE, _vkLogicalDevice ) << ",\n";
-		result << indent << "		/*descriptorWriteCount*/ " << IntToString(uint(slots.size())) << ",\n";
-		result << indent << "		/*pDescriptorWrites*/ " << nameSer.Get( slots.data() ) << ",\n";
-		result << indent << "		/*descriptorCopyCount*/ 0,\n";
-		result << indent << "		/*pDescriptorCopies*/ null );\n";
-		result << "\t}\n";
-
-		FlushGlobal();
 	}
 	
 /*
@@ -875,6 +959,7 @@ namespace RDE
 
 		RemoveUnusedSwapchainImages();
 		AddInitialLayouts();
+		InitDescriptorSets();
 		ResetToInitial();
 		Flush();
 	}
@@ -889,20 +974,23 @@ namespace RDE
 													const VkPhysicalDeviceMemoryProperties &memProps, const VkPhysicalDeviceFeatures &physFeatures,
 													uint32_t queueCount, VkQueueFamilyProperties queueProps[])
 	{
-		_vkInstance			= instance;
-		_vkPhysicalDevice	= PhysicalDevice;
-		_deviceName			= physProps.deviceName;
-		_apiVersion			= VK_MAKE_VERSION( VK_VERSION_MAJOR(physProps.apiVersion), VK_VERSION_MINOR(physProps.apiVersion), 0 );
-		_memProps			= memProps;
+		_vkInstance	= instance;
+		_apiVersion	= VK_MAKE_VERSION( VK_VERSION_MAJOR(physProps.apiVersion), VK_VERSION_MINOR(physProps.apiVersion), 0 );
 
-		std::memcpy( OUT _memIdxMap, memIdxMap, sizeof(_memIdxMap) );
+		auto&	props = _deviceProps[PhysicalDevice];
+
+		props.memProps		= memProps;
+		props.physProps		= physProps;
+		props.physFeatures	= physFeatures;
+
+		std::memcpy( OUT props.memIdxMap, memIdxMap, sizeof(props.memIdxMap) );
 
 		if ( not remapper.IsResourceAlive( VK_OBJECT_TYPE_INSTANCE, VkResourceID(instance), chunkIndex ))
 			CHECK( remapper.CreateResource( VK_OBJECT_TYPE_INSTANCE, VkResourceID(instance), chunkIndex ));
 
 		CHECK( remapper.CreateResource( VK_OBJECT_TYPE_PHYSICAL_DEVICE, VkResourceID(PhysicalDevice), chunkIndex ));
 
-		_queueProps.assign( &queueProps[0], &queueProps[queueCount] );
+		props.queueProps.assign( &queueProps[0], &queueProps[queueCount] );
 	}
 	
 /*
@@ -914,16 +1002,19 @@ namespace RDE
 									   const VkDeviceCreateInfo * pCreateInfo, const VkAllocationCallbacks * pAllocator, VkDevice * pDevice)
 	{
 		CHECK_FATAL( _vkInstance );
-		CHECK_FATAL( _vkPhysicalDevice );
+		CHECK_FATAL( not _vkPhysicalDevice );
 		CHECK_FATAL( not _vkLogicalDevice );
 		CHECK_FATAL( pDevice );
 
 		_vkPhysicalDevice	= physicalDevice;
 		_vkLogicalDevice	= *pDevice;
 
+		auto&	dprops = _deviceProps[_vkPhysicalDevice];
+		auto&	qprops = dprops.queueProps;
+
 		CHECK( remapper.CreateResource( VK_OBJECT_TYPE_DEVICE, VkResourceID(*pDevice), chunkIndex ));
 		
-		_globalSrcAfter << "\tCHECK( app.CreateWindow( 800, 600, \"Player\" ));\n\n";
+		_globalSrcAfter << "\tCHECK( app.CreateWindow( 1024, 768, \"Player\" ));\n\n";
 
 		_globalSrcAfter << "\t{\n"
 			<< "\t\tconst VApp::QueueInfo queues[] = {\n";
@@ -938,11 +1029,11 @@ namespace RDE
 				_globalSrcAfter << "\t\t\t{ "
 					<< HexToString((q.queueFamilyIndex << 16) | j) << ", "
 					<< Serialize_VkDeviceQueueCreateFlags( q.flags ) << ", "
-					<< Serialize_VkQueueFlags( _queueProps[q.queueFamilyIndex].queueFlags ) << ", "
+					<< Serialize_VkQueueFlags( qprops[q.queueFamilyIndex].queueFlags ) << ", "
 					<< FloatToString( q.pQueuePriorities[j] )
 					<< " },\n";
 
-				if ( _graphicsQueue == Default and EnumEq( _queueProps[q.queueFamilyIndex].queueFlags, VK_QUEUE_GRAPHICS_BIT ))
+				if ( _graphicsQueue == Default and EnumEq( qprops[q.queueFamilyIndex].queueFlags, VK_QUEUE_GRAPHICS_BIT ))
 					_graphicsQueue = EQueueFamily(q.queueFamilyIndex);
 			}
 		}
@@ -962,7 +1053,7 @@ namespace RDE
 			<< "\t\t\t" << remapper.GetResourceName( VK_OBJECT_TYPE_INSTANCE, VkResourceID(_vkInstance) ) << ",\n"
 			<< "\t\t\t" << remapper.GetResourceName( VK_OBJECT_TYPE_PHYSICAL_DEVICE, VkResourceID(_vkPhysicalDevice) ) << ",\n"
 			<< "\t\t\t" << remapper.GetResourceName( VK_OBJECT_TYPE_DEVICE, VkResourceID(_vkLogicalDevice) ) << ",\n"
-			<< "\t\t	\"" << _deviceName << "\",\n"
+			<< "\t\t	\"" << dprops.physProps.deviceName << "\",\n"
 			<< "\t\t	VK_MAKE_VERSION( " << ToString(VK_VERSION_MAJOR(_apiVersion)) << ", " << ToString(VK_VERSION_MINOR(_apiVersion)) << ", 0 ),\n"
 			<< "\t\t	queues,\n"
 			<< "\t\t	VulkanDevice::GetRecomendedInstanceLayers(),\n"
@@ -997,7 +1088,7 @@ namespace RDE
 			<< "\t{\n"
 			<< "\t\tCHECK( app.CreateSwapchain(\n"
 			//<< "\t\t	" << remapper.GetResourceName( VK_OBJECT_TYPE_SWAPCHAIN_KHR, VkResourceID(*pSwapchain) ) << ",\n"
-			<< "\t\t	uint2{ " << IntToString( pCreateInfo->imageExtent.width ) << ", " << IntToString( pCreateInfo->imageExtent.height ) << " },\n"
+			//<< "\t\t	uint2{ " << IntToString( pCreateInfo->imageExtent.width ) << ", " << IntToString( pCreateInfo->imageExtent.height ) << " },\n"
 			<< "\t\t	" << Serialize_VkFormat( pCreateInfo->imageFormat ) << ",\n"
 			<< "\t\t	" << Serialize_VkColorSpaceKHR( pCreateInfo->imageColorSpace ) << ",\n"
 			<< "\t\t	" << IntToString( pCreateInfo->minImageCount ) << ",\n"
@@ -1222,6 +1313,27 @@ namespace RDE
 			new_submits[count].pWaitSemaphores		= wait_count ? wait_semaphores : null;
 			new_submits[count].pWaitDstStageMask	= wait_count ? wait_dst_stages : null;
 			++count;
+
+			for (uint j = 0; j < pSubmits[i].commandBufferCount; ++j)
+			{
+				auto&	cmdbuf = _cmdBuffers[ pSubmits[i].pCommandBuffers[j] ];
+
+				for (auto& ev : cmdbuf.waitingEvents)
+				{
+					if ( not _signaledEvents.erase( ev ))
+					{
+						result << indent << "VK_CALL( app.vkSetEvent( \n";
+						result << indent << "		/*device*/ " << remapper( VK_OBJECT_TYPE_DEVICE, _vkLogicalDevice ) << ",\n";
+						result << indent << "		/*event*/ " << remapper( VK_OBJECT_TYPE_EVENT, ev ) << " ));\n";
+					}
+				}
+				cmdbuf.waitingEvents.clear();
+
+				for (auto& ev : cmdbuf.signaledEvents) {
+					_signaledEvents.insert( ev );
+				}
+				cmdbuf.signaledEvents.clear();
+			}
 		}
 
 		VulkanFnToCpp::QueueSubmit( chunkIndex, threadID, timestamp, queue, count, new_submits, fence );
@@ -1509,15 +1621,16 @@ namespace RDE
 
 		uint64_t	index	= remapper.GetResourceUID( VK_OBJECT_TYPE_DEVICE_MEMORY, VkResourceID(*pMemory), chunkIndex );
 		auto&		info	= _memoryMap[index];
-		
+		auto&		props	= _deviceProps[_vkPhysicalDevice];
+
 		info.handle		= *pMemory;
 		info.allocInfo	= *pAllocateInfo;
 
-		CHECK_ERR( pAllocateInfo->memoryTypeIndex < CountOf(_memIdxMap), void());
-		const uint	mem_idx = _memIdxMap[ pAllocateInfo->memoryTypeIndex ];
+		CHECK_ERR( pAllocateInfo->memoryTypeIndex < CountOf(props.memIdxMap), void());
+		const uint	mem_idx = props.memIdxMap[ pAllocateInfo->memoryTypeIndex ];
 
-		CHECK_ERR( mem_idx < _memProps.memoryTypeCount, void());
-		const auto&	mem_type = _memProps.memoryTypes[mem_idx];
+		CHECK_ERR( mem_idx < props.memProps.memoryTypeCount, void());
+		const auto&	mem_type = props.memProps.memoryTypes[mem_idx];
 
 		info.propertyFlags = mem_type.propertyFlags;
 	}
@@ -1705,6 +1818,8 @@ namespace RDE
 		info.queueFamilies.clear();
 		info.aspectMask		= 0;
 		info.initialQueue	= Default;
+		
+		auto&	qprops = _deviceProps[_vkPhysicalDevice].queueProps;
 
 		for (uint i = 0; i < pCreateInfo->queueFamilyIndexCount; ++i)
 		{
@@ -1713,10 +1828,10 @@ namespace RDE
 			 if ( _graphicsQueue == EQueueFamily(pCreateInfo->pQueueFamilyIndices[i]) )
 				info.initialQueue = _graphicsQueue;
 
-			 if ( info.initialQueue == Default and EnumEq( _queueProps[pCreateInfo->pQueueFamilyIndices[i]].queueFlags, VK_QUEUE_GRAPHICS_BIT ))
+			 if ( info.initialQueue == Default and EnumEq( qprops[pCreateInfo->pQueueFamilyIndices[i]].queueFlags, VK_QUEUE_GRAPHICS_BIT ))
 				info.initialQueue = EQueueFamily(pCreateInfo->pQueueFamilyIndices[i]);
 			 
-			 if ( info.initialQueue == Default and EnumEq( _queueProps[pCreateInfo->pQueueFamilyIndices[i]].queueFlags, VK_QUEUE_COMPUTE_BIT ))
+			 if ( info.initialQueue == Default and EnumEq( qprops[pCreateInfo->pQueueFamilyIndices[i]].queueFlags, VK_QUEUE_COMPUTE_BIT ))
 				info.initialQueue = EQueueFamily(pCreateInfo->pQueueFamilyIndices[i]);
 		}
 		
@@ -1774,6 +1889,8 @@ namespace RDE
 		info.createInfo		= *pCreateInfo;
 		info.queueFamilies.clear();
 		info.initialQueue	= Default;
+		
+		auto&	qprops = _deviceProps[_vkPhysicalDevice].queueProps;
 
 		for (uint i = 0; i < pCreateInfo->queueFamilyIndexCount; ++i)
 		{
@@ -1782,10 +1899,10 @@ namespace RDE
 			 if ( _graphicsQueue == EQueueFamily(pCreateInfo->pQueueFamilyIndices[i]) )
 				 info.initialQueue = _graphicsQueue;
 
-			 if ( info.initialQueue == Default and EnumEq( _queueProps[pCreateInfo->pQueueFamilyIndices[i]].queueFlags, VK_QUEUE_GRAPHICS_BIT ))
+			 if ( info.initialQueue == Default and EnumEq( qprops[pCreateInfo->pQueueFamilyIndices[i]].queueFlags, VK_QUEUE_GRAPHICS_BIT ))
 				 info.initialQueue = EQueueFamily(pCreateInfo->pQueueFamilyIndices[i]);
 			 
-			 if ( info.initialQueue == Default and EnumEq( _queueProps[pCreateInfo->pQueueFamilyIndices[i]].queueFlags, VK_QUEUE_COMPUTE_BIT ))
+			 if ( info.initialQueue == Default and EnumEq( qprops[pCreateInfo->pQueueFamilyIndices[i]].queueFlags, VK_QUEUE_COMPUTE_BIT ))
 				 info.initialQueue = EQueueFamily(pCreateInfo->pQueueFamilyIndices[i]);
 		}
 		
@@ -2062,13 +2179,6 @@ namespace RDE
 			<< ", \"" << remapper.GetResourceName( VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, VkResourceID(*pSetLayout) )
 			<< "\" );\n";
 		FlushGlobal();
-
-		auto&	ds_layout = _dsLayoutMap[*pSetLayout];
-		ds_layout.bindings.assign( pCreateInfo->pBindings, pCreateInfo->pBindings + pCreateInfo->bindingCount );
-
-		for (auto& ds : ds_layout.bindings) {
-			CHECK( ds.pImmutableSamplers == null );
-		}
 	}
 	
 /*
@@ -2142,13 +2252,6 @@ namespace RDE
 */
 	void VulkanFnToCpp2::CreatePipelineCache (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkPipelineCacheCreateInfo * pCreateInfo, const VkAllocationCallbacks * pAllocator, VkPipelineCache * pPipelineCache)
 	{
-		VulkanFnToCpp::CreatePipelineCache( chunkIndex, threadID, timestamp, device, pCreateInfo, pAllocator, pPipelineCache );
-		
-		result << "\tapp.SetObjectName( "
-			<< remapper.GetResourceName( VK_OBJECT_TYPE_PIPELINE_CACHE, VkResourceID(*pPipelineCache) )
-			<< ", \"" << remapper.GetResourceName( VK_OBJECT_TYPE_PIPELINE_CACHE, VkResourceID(*pPipelineCache) )
-			<< "\" );\n";
-		FlushGlobal();
 	}
 	
 /*
@@ -2156,9 +2259,10 @@ namespace RDE
 	CreateGraphicsPipelines
 =================================================
 */
-	void VulkanFnToCpp2::CreateGraphicsPipelines (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkPipelineCache pipelineCache, uint32_t createInfoCount, const VkGraphicsPipelineCreateInfo * pCreateInfos, const VkAllocationCallbacks * pAllocator, VkPipeline * pPipelines)
+	void VulkanFnToCpp2::CreateGraphicsPipelines (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkPipelineCache, uint32_t createInfoCount, const VkGraphicsPipelineCreateInfo * pCreateInfos, const VkAllocationCallbacks * pAllocator, VkPipeline * pPipelines)
 	{
-		VulkanFnToCpp::CreateGraphicsPipelines( chunkIndex, threadID, timestamp, device, pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines );
+
+		VulkanFnToCpp::CreateGraphicsPipelines( chunkIndex, threadID, timestamp, device, VK_NULL_HANDLE, createInfoCount, pCreateInfos, pAllocator, pPipelines );
 		
 		result << "\tapp.SetObjectName( "
 			<< remapper.GetResourceName( VK_OBJECT_TYPE_PIPELINE, VkResourceID(*pPipelines) )
@@ -2172,9 +2276,9 @@ namespace RDE
 	CreateComputePipelines
 =================================================
 */
-	void VulkanFnToCpp2::CreateComputePipelines (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkPipelineCache pipelineCache, uint32_t createInfoCount, const VkComputePipelineCreateInfo * pCreateInfos, const VkAllocationCallbacks * pAllocator, VkPipeline * pPipelines)
+	void VulkanFnToCpp2::CreateComputePipelines (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkPipelineCache, uint32_t createInfoCount, const VkComputePipelineCreateInfo * pCreateInfos, const VkAllocationCallbacks * pAllocator, VkPipeline * pPipelines)
 	{
-		VulkanFnToCpp::CreateComputePipelines( chunkIndex, threadID, timestamp, device, pipelineCache, createInfoCount, pCreateInfos, pAllocator, pPipelines );
+		VulkanFnToCpp::CreateComputePipelines( chunkIndex, threadID, timestamp, device, VK_NULL_HANDLE, createInfoCount, pCreateInfos, pAllocator, pPipelines );
 		
 		result << "\tapp.SetObjectName( "
 			<< remapper.GetResourceName( VK_OBJECT_TYPE_PIPELINE, VkResourceID(*pPipelines) )
@@ -2201,6 +2305,96 @@ namespace RDE
 	
 /*
 =================================================
+	SetEvent
+=================================================
+*/
+	void VulkanFnToCpp2::SetEvent (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkEvent event)
+	{
+		VulkanFnToCpp::SetEvent( chunkIndex, threadID, timestamp, device, event );
+
+		_signaledEvents.insert( VkResourceID(event) );
+	}
+		
+/*
+=================================================
+	ResetEvent
+=================================================
+*/
+	void VulkanFnToCpp2::ResetEvent (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkEvent event)
+	{
+		VulkanFnToCpp::ResetEvent( chunkIndex, threadID, timestamp, device, event );
+
+		_signaledEvents.erase( VkResourceID(event) );
+	}
+	
+/*
+=================================================
+	GetEventStatus
+=================================================
+*/
+	void VulkanFnToCpp2::GetEventStatus (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkEvent event)
+	{
+		if ( not _signaledEvents.erase( VkResourceID(event) ))
+		{
+			result << "\t// skip vkGetEventStatus\n";
+			FlushGlobal();
+			return;
+		}
+
+		VulkanFnToCpp::GetEventStatus( chunkIndex, threadID, timestamp, device, event );
+	}
+	
+/*
+=================================================
+	CmdSetEvent
+=================================================
+*/
+	void VulkanFnToCpp2::CmdSetEvent (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkCommandBuffer commandBuffer, VkEvent event, VkPipelineStageFlags stageMask)
+	{
+		VulkanFnToCpp::CmdSetEvent( chunkIndex, threadID, timestamp, commandBuffer, event, stageMask );
+
+		_cmdBuffers[commandBuffer].signaledEvents.insert( VkResourceID(event) );
+	}
+	
+/*
+=================================================
+	CmdResetEvent
+=================================================
+*/
+	void VulkanFnToCpp2::CmdResetEvent (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkCommandBuffer commandBuffer, VkEvent event, VkPipelineStageFlags stageMask)
+	{
+		VulkanFnToCpp::CmdResetEvent( chunkIndex, threadID, timestamp, commandBuffer, event, stageMask );
+		
+		_cmdBuffers[commandBuffer].signaledEvents.erase( VkResourceID(event) );
+	}
+	
+/*
+=================================================
+	CmdWaitEvents
+=================================================
+*/
+	void VulkanFnToCpp2::CmdWaitEvents (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkCommandBuffer commandBuffer, uint32_t eventCount, const VkEvent * pEvents,
+										VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask, uint32_t memoryBarrierCount, const VkMemoryBarrier * pMemoryBarriers,
+										uint32_t bufferMemoryBarrierCount, const VkBufferMemoryBarrier * pBufferMemoryBarriers,
+										uint32_t imageMemoryBarrierCount, const VkImageMemoryBarrier * pImageMemoryBarriers)
+	{
+		VulkanFnToCpp::CmdWaitEvents( chunkIndex, threadID, timestamp, commandBuffer, eventCount, pEvents, srcStageMask, dstStageMask,
+									  memoryBarrierCount, pMemoryBarriers, bufferMemoryBarrierCount, pBufferMemoryBarriers, 
+									  imageMemoryBarrierCount, pImageMemoryBarriers );
+		
+		auto& cmdbuf = _cmdBuffers[commandBuffer];
+		
+		for (uint i = 0; i < eventCount; ++i)
+		{
+			if ( not cmdbuf.signaledEvents.erase( VkResourceID(pEvents[i]) ))
+			{
+				cmdbuf.waitingEvents.insert( VkResourceID(pEvents[i]) );
+			}
+		}
+	}
+
+/*
+=================================================
 	CreateQueryPool
 =================================================
 */
@@ -2211,22 +2405,6 @@ namespace RDE
 		result << "\tapp.SetObjectName( "
 			<< remapper.GetResourceName( VK_OBJECT_TYPE_QUERY_POOL, VkResourceID(*pQueryPool) )
 			<< ", \"" << remapper.GetResourceName( VK_OBJECT_TYPE_QUERY_POOL, VkResourceID(*pQueryPool) )
-			<< "\" );\n";
-		FlushGlobal();
-	}
-	
-/*
-=================================================
-	CreateDescriptorUpdateTemplate
-=================================================
-*/
-	void VulkanFnToCpp2::CreateDescriptorUpdateTemplate (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkDescriptorUpdateTemplateCreateInfo * pCreateInfo, const VkAllocationCallbacks * pAllocator, VkDescriptorUpdateTemplate * pDescriptorUpdateTemplate)
-	{
-		VulkanFnToCpp::CreateDescriptorUpdateTemplate( chunkIndex, threadID, timestamp, device, pCreateInfo, pAllocator, pDescriptorUpdateTemplate );
-		
-		result << "\tapp.SetObjectName( "
-			<< remapper.GetResourceName( VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE, VkResourceID(*pDescriptorUpdateTemplate) )
-			<< ", \"" << remapper.GetResourceName( VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE, VkResourceID(*pDescriptorUpdateTemplate) )
 			<< "\" );\n";
 		FlushGlobal();
 	}
@@ -2278,11 +2456,6 @@ namespace RDE
 				<< remapper.GetResourceName( VK_OBJECT_TYPE_DESCRIPTOR_SET, VkResourceID(pDescriptorSets[i]) )
 				<< ", \"" << remapper.GetResourceName( VK_OBJECT_TYPE_DESCRIPTOR_SET, VkResourceID(pDescriptorSets[i]) )
 				<< "\" );\n";
-
-			auto	iter = _dsLayoutMap.find( pAllocateInfo->pSetLayouts[i] );
-			CHECK_ERR( iter != _dsLayoutMap.end(), void());
-
-			_descSetMap[pDescriptorSets[i]] = &iter->second;
 		}
 		FlushGlobal();
 	}
@@ -2322,6 +2495,184 @@ namespace RDE
 		FlushGlobal();
 
 		_initSrc << "\tapp.LoadHostMemory( " << ContentIDtoName( mappedData ) << ", " << ToString( size_t(mappedDataSize) ) << "_b );\n";
+	}
+	
+/*
+=================================================
+	CmdBindDescriptorSets
+=================================================
+*/
+	void VulkanFnToCpp2::CmdBindDescriptorSets (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkCommandBuffer commandBuffer, VkPipelineBindPoint pipelineBindPoint,
+												VkPipelineLayout layout, uint32_t firstSet, uint32_t descriptorSetCount, const VkDescriptorSet * pDescriptorSets,
+												uint32_t dynamicOffsetCount, const uint32_t * pDynamicOffsets)
+	{
+		VulkanFnToCpp::CmdBindDescriptorSets( chunkIndex, threadID, timestamp, commandBuffer, pipelineBindPoint, layout,
+											  firstSet, descriptorSetCount, pDescriptorSets, dynamicOffsetCount, pDynamicOffsets );
+
+		for (uint i = 0; i < descriptorSetCount; ++i)
+		{
+			auto&	ds	 = pDescriptorSets[i];
+			auto	iter = _initialDS.find( ds );
+
+			if ( iter != _initialDS.end() )
+			{
+				iter->second.bindCount++;
+			}
+		}
+	}
+
+/*
+=================================================
+	CmdBindDescriptorSets
+=================================================
+*/
+	void VulkanFnToCpp2::DebugMarkerSetObjectNameEXT (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkResourceID resId, StringView name)
+	{
+		remapper.SetDebugName( resId, chunkIndex, name );
+	}
+	
+/*
+=================================================
+	CreateDescriptorUpdateTemplate
+=================================================
+*/
+	void VulkanFnToCpp2::CreateDescriptorUpdateTemplate (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkDescriptorUpdateTemplateCreateInfo * pCreateInfo, const VkAllocationCallbacks * pAllocator, VkDescriptorUpdateTemplate * pDescriptorUpdateTemplate)
+	{
+		VulkanFnToCpp::CreateDescriptorUpdateTemplate( chunkIndex, threadID, timestamp, device, pCreateInfo, pAllocator, pDescriptorUpdateTemplate );
+		
+		result << "\tapp.SetObjectName( "
+			<< remapper.GetResourceName( VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE, VkResourceID(*pDescriptorUpdateTemplate) )
+			<< ", \"" << remapper.GetResourceName( VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE, VkResourceID(*pDescriptorUpdateTemplate) )
+			<< "\" );\n";
+		FlushGlobal();
+
+		auto&	info = _dsTemplates[ *pDescriptorUpdateTemplate ];
+		info.entries.assign( pCreateInfo->pDescriptorUpdateEntries, pCreateInfo->pDescriptorUpdateEntries + pCreateInfo->descriptorUpdateEntryCount );
+	}
+	
+/*
+=================================================
+	UpdateDescriptorSetWithTemplate
+=================================================
+*/
+	void VulkanFnToCpp2::UpdateDescriptorSetWithTemplate (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkDescriptorSet descriptorSet,
+														  VkDescriptorUpdateTemplate descriptorUpdateTemplate, ArrayView<VkWriteDescriptorSet> slots)
+	{
+	#if 1
+		
+		nameSer.Clear();
+		remapper.SetCurrentPos( chunkIndex );
+		before << "\t{\n";
+		
+		const String arr_name = nameSer.MakeUnique( slots.data(), "descriptorWrites"s, "writeDescriptorSet"s );
+		before << indent << "VkWriteDescriptorSet  " << arr_name << "[" << IntToString(uint(slots.size())) << "] = {};\n";
+		
+		for (size_t i = 0; i < slots.size(); ++i) {
+			Serialize2_VkWriteDescriptorSet( &slots[i], String(arr_name) << "[" << IntToString(i) << "]", nameSer, remapper, indent, INOUT result, INOUT before );
+		}
+
+		result << indent << "app.vkUpdateDescriptorSets( \n";
+		result << indent << "		/*device*/ " << remapper( VK_OBJECT_TYPE_DEVICE, _vkLogicalDevice ) << ",\n";
+		result << indent << "		/*descriptorWriteCount*/ " << IntToString(uint(slots.size())) << ",\n";
+		result << indent << "		/*pDescriptorWrites*/ " << nameSer.Get( slots.data() ) << ",\n";
+		result << indent << "		/*descriptorCopyCount*/ 0,\n";
+		result << indent << "		/*pDescriptorCopies*/ null );\n";
+		result << "\t}\n";
+
+		FlushGlobal();
+
+	#else
+		nameSer.Clear();
+		remapper.SetCurrentPos( chunkIndex );
+
+		auto	iter = _dsTemplates.find( descriptorUpdateTemplate );
+		CHECK_ERR( iter != _dsTemplates.end(), void());
+
+		before << "\t{\n";
+
+		size_t	data_size	= 0;
+		size_t	data_align	= 0;
+
+		for (auto& entry : iter->second.entries)
+		{
+			/*BEGIN_ENUM_CHECKS();
+			switch ( entry.descriptorType )
+			{
+				case VK_DESCRIPTOR_TYPE_SAMPLER :
+				case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER :
+				case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE :
+				case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE :
+				case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT :
+				{
+					const size_t	stride = Max( entry.stride, sizeof(VkDescriptorImageInfo) );
+					data_size	= Max( data_size, entry.offset + stride * entry.descriptorCount );
+					data_align	= Max( data_align, alignof(VkDescriptorImageInfo) );
+
+					for (uint i = 0; i < entry.descriptorCount; ++i)
+					{
+						auto*	data = static_cast<const VkDescriptorImageInfo *>( pData + BytesU{entry.offset + stride*i} );
+						result << indent << "static_cast<VkDescriptorImageInfo *>(pData + " << ToString(entry.offset + stride*i) << "_b) = { "
+							<< remapper.GetResource( VK_OBJECT_TYPE_SAMPLER, VkResourceID(data->sampler) ) << ", "
+							<< remapper.GetResource( VK_OBJECT_TYPE_IMAGE_VIEW, VkResourceID(data->imageView) ) << ", "
+							<< Serialize_VkImageLayout( data->imageLayout ) << " };\n";
+					}
+					break;
+				}
+				case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER :
+				case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER :
+				{
+					const size_t	stride = Max( entry.stride, sizeof(VkBufferView) );
+					data_size	= Max( data_size, entry.offset + stride * entry.descriptorCount );
+					data_align	= Max( data_align, alignof(VkBufferView) );
+					
+					for (uint i = 0; i < entry.descriptorCount; ++i)
+					{
+						auto*	data = static_cast<const VkBufferView *>( pData + BytesU{entry.offset + stride*i} );
+						result << indent << "static_cast<VkBufferView *>(pData + " << ToString(entry.offset + stride*i) << "_b) = "
+							<< remapper.GetResource( VK_OBJECT_TYPE_BUFFER_VIEW, VkResourceID(*data) ) << ";\n";
+					}
+					break;
+				}
+				case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER :
+				case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER :
+				case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC :
+				case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC :
+				{
+					const size_t	stride = Max( entry.stride, sizeof(VkDescriptorBufferInfo) );
+					data_size	= Max( data_size, entry.offset + stride * entry.descriptorCount );
+					data_align	= Max( data_align, alignof(VkDescriptorBufferInfo) );
+					
+					for (uint i = 0; i < entry.descriptorCount; ++i)
+					{
+						auto*	data = static_cast<const VkDescriptorBufferInfo *>( pData + BytesU{entry.offset + stride*i} );
+						result << indent << "static_cast<VkDescriptorBufferInfo *>(pData + " << ToString(entry.offset + stride*i) << "_b) = { "
+							<< remapper.GetResource( VK_OBJECT_TYPE_BUFFER, VkResourceID(data->buffer) ) << ", "
+							<< IntToString(data->offset) << ", "
+							<< IntToString(data->range)	<< "};\n";
+					}
+					break;
+				}
+				case VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK_EXT :
+				case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV :
+				case VK_DESCRIPTOR_TYPE_RANGE_SIZE :
+				case VK_DESCRIPTOR_TYPE_MAX_ENUM :
+					CHECK( !"not supported" );
+					break;
+			}
+			END_ENUM_CHECKS();*/
+		}
+
+		before << indent << "alignof(" << ToString(data_align) << ") uint64_t storage[(" << ToString(data_size) << " + sizeof(uint64_t)) / sizeof(uint64_t)];\n";
+		before << indent << "void* pData = static_cast<void*>(storage);\n";
+
+		result << indent <<  "app.vkUpdateDescriptorSetWithTemplate( " << remapper.GetResource( VK_OBJECT_TYPE_DEVICE, VkResourceID(device) ) << ", ";
+		result << indent << remapper.GetResource( VK_OBJECT_TYPE_DESCRIPTOR_SET, VkResourceID(descriptorSet) ) << ", ";
+		result << indent << remapper.GetResource( VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE, VkResourceID(descriptorUpdateTemplate) ) << ", ";
+		result << indent << "pData ));\n";
+		result << "\t}\n";
+
+		FlushGlobal();
+	#endif
 	}
 //-----------------------------------------------------------------------------
 

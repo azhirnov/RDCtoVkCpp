@@ -33,6 +33,10 @@ namespace RDE
 		virtual void FlushMappedMemoryRanges (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, uint32_t memoryRangeCount,
 											  const VkMappedMemoryRange * pMemoryRanges, BytesU mappedDataSize, ContentID mappedData) {}
 		
+		virtual void DebugMarkerSetObjectNameEXT (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkResourceID resId, StringView name) {}
+	
+		virtual void UpdateDescriptorSetWithTemplate (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkDescriptorSet descriptorSet, VkDescriptorUpdateTemplate descriptorUpdateTemplate, ArrayView<VkWriteDescriptorSet> data) {}
+	
 		virtual void CreateDevice (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo * pCreateInfo, const VkAllocationCallbacks * pAllocator, VkDevice * pDevice) {}
 		virtual void GetDeviceQueue (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, uint32_t queueFamilyIndex, uint32_t queueIndex, VkQueue * pQueue) {}
 		virtual void AllocateMemory (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkMemoryAllocateInfo * pAllocateInfo, const VkAllocationCallbacks * pAllocator, VkDeviceMemory * pMemory) {}
@@ -122,7 +126,6 @@ namespace RDE
 		virtual void CmdDebugMarkerBeginEXT (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkCommandBuffer commandBuffer, const VkDebugMarkerMarkerInfoEXT * pMarkerInfo) {}
 		virtual void CmdDebugMarkerInsertEXT (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkCommandBuffer commandBuffer, const VkDebugMarkerMarkerInfoEXT * pMarkerInfo) {}
 		virtual void CmdDebugMarkerEndEXT (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkCommandBuffer commandBuffer) {}
-		virtual void DebugMarkerSetObjectNameEXT (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkDebugMarkerObjectNameInfoEXT * pNameInfo) {}
 		virtual void CreateSwapchainKHR (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkSwapchainCreateInfoKHR * pCreateInfo, const VkAllocationCallbacks * pAllocator, VkSwapchainKHR * pSwapchain) {}
 		virtual void RegisterDeviceEventEXT (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkDeviceEventInfoEXT * pDeviceEventInfo, const VkAllocationCallbacks * pAllocator, VkFence * pFence) {}
 		virtual void RegisterDisplayEventEXT (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkDisplayKHR display, const VkDisplayEventInfoEXT * pDisplayEventInfo, const VkAllocationCallbacks * pAllocator, VkFence * pFence) {}

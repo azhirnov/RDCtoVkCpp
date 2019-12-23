@@ -7,7 +7,6 @@
 #include "stl/Algorithms/StringUtils.h"
 #include "stl/Stream/Stream.h"
 #include "stl/Stream/FileStream.h"
-#include "stl/Stream/MemStream.h"
 
 #define VK_NO_PROTOTYPES
 #include "vulkan/vulkan.h"

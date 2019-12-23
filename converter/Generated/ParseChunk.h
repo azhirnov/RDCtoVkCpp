@@ -89,7 +89,6 @@ bool Parse_vkCmdDispatchIndirect (const Node_t &node, uint64_t threadId, uint64_
 bool Parse_vkCmdDebugMarkerBeginEXT (const Node_t &node, uint64_t threadId, uint64_t timestamp);
 bool Parse_vkCmdDebugMarkerInsertEXT (const Node_t &node, uint64_t threadId, uint64_t timestamp);
 bool Parse_vkCmdDebugMarkerEndEXT (const Node_t &node, uint64_t threadId, uint64_t timestamp);
-bool Parse_vkDebugMarkerSetObjectNameEXT (const Node_t &node, uint64_t threadId, uint64_t timestamp);
 bool Parse_vkCreateSwapchainKHR (const Node_t &node, uint64_t threadId, uint64_t timestamp);
 bool Parse_vkRegisterDeviceEventEXT (const Node_t &node, uint64_t threadId, uint64_t timestamp);
 bool Parse_vkRegisterDisplayEventEXT (const Node_t &node, uint64_t threadId, uint64_t timestamp);

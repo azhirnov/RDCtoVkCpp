@@ -5,13 +5,61 @@
 namespace RDE
 {
 	
+	//
+	// Helper Vulkan listener
+	//
+
+	class RdCaptureReader::HelperVulkanListener final : public IVulkanListener
+	{
+	public:
+		struct DSLayoutInfo
+		{
+			Array<VkDescriptorSetLayoutBinding>		bindings;
+		};
+		using DSLayoutInfoMap_t		= HashMap< VkDescriptorSetLayout, DSLayoutInfo >;
+		using DescrSetInfoMap_t		= HashMap< VkDescriptorSet, DSLayoutInfo* >;
+
+
+	public:
+		DSLayoutInfoMap_t		dsLayoutMap;
+		DescrSetInfoMap_t		descSetMap;
+
+
+	public:
+		void CreateDescriptorSetLayout (uint, uint64_t, uint64_t, VkDevice, const VkDescriptorSetLayoutCreateInfo * pCreateInfo, const VkAllocationCallbacks *, VkDescriptorSetLayout * pSetLayout)
+		{
+			auto&	ds_layout = dsLayoutMap[*pSetLayout];
+			ds_layout.bindings.assign( pCreateInfo->pBindings, pCreateInfo->pBindings + pCreateInfo->bindingCount );
+
+			/*for (auto& ds : ds_layout.bindings) {
+				CHECK( ds.pImmutableSamplers == null );		// TODO
+			}*/
+		}
+
+		void AllocateDescriptorSets (uint, uint64_t, uint64_t, VkDevice, const VkDescriptorSetAllocateInfo * pAllocateInfo, VkDescriptorSet * pDescriptorSets)
+		{
+			for (uint i = 0; i < pAllocateInfo->descriptorSetCount; ++i)
+			{
+				auto	iter = dsLayoutMap.find( pAllocateInfo->pSetLayouts[i] );
+				CHECK_ERR( iter != dsLayoutMap.end(), void());
+
+				descSetMap[pDescriptorSets[i]] = &iter->second;
+			}
+		}
+	};
+//-----------------------------------------------------------------------------
+
+
+
 /*
 =================================================
 	constructor
 =================================================
 */
-	RdCaptureReader::RdCaptureReader ()
+	RdCaptureReader::RdCaptureReader () :
+		_helper{ MakeShared<HelperVulkanListener>()}
 	{
+		AddListener( _helper );
 	}
 	
 /*
@@ -38,10 +86,13 @@ namespace RDE
 		_chunkParser["vkEnumeratePhysicalDevices"] = &RdCaptureReader::_Parse_vkEnumeratePhysicalDevices;
 		_chunkParser["Frame Metadata"] = &RdCaptureReader::_Parse_FrameMetadata;
 		_chunkParser["vkFlushMappedMemoryRanges"] = &RdCaptureReader::_Parse_FlushMappedMemoryRanges;
+		_chunkParser["vkDebugMarkerSetObjectNameEXT"] = &RdCaptureReader::_Parse_DebugMarkerSetObjectNameEXT;
+		_chunkParser["vkUpdateDescriptorSetWithTemplate"] = &RdCaptureReader::_Parse_UpdateDescriptorSetWithTemplate;
 		
 		switch ( version )
 		{
 			case 13 :
+			case 14 :
 				break;
 
 			case 16 :
@@ -877,6 +928,65 @@ namespace RDE
 
 /*
 =================================================
+	_ValidateImageLayout
+=================================================
+*/
+	static void _ValidateImageLayout (VkDescriptorType descType, INOUT VkImageLayout &layout)
+	{
+		BEGIN_ENUM_CHECKS();
+		switch ( layout )
+		{
+			case VK_IMAGE_LAYOUT_UNDEFINED :
+			case VK_IMAGE_LAYOUT_GENERAL :
+			case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL :
+			case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL :
+			case VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL :
+			case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL :
+			case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL :
+			case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL :
+			case VK_IMAGE_LAYOUT_PREINITIALIZED :
+			case VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL :
+			case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL :
+			case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR :
+			case VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR :
+			case VK_IMAGE_LAYOUT_SHADING_RATE_OPTIMAL_NV :
+			case VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT :
+			case VK_IMAGE_LAYOUT_RANGE_SIZE :
+			case VK_IMAGE_LAYOUT_MAX_ENUM :
+				return;
+		}
+		END_ENUM_CHECKS();
+
+		BEGIN_ENUM_CHECKS();
+		switch ( descType )
+		{
+			case VK_DESCRIPTOR_TYPE_SAMPLER :
+				layout = VK_IMAGE_LAYOUT_UNDEFINED;
+				break;
+			case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER :
+			case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE :
+			case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE :
+			case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT :
+				layout = VK_IMAGE_LAYOUT_GENERAL;
+				break;
+
+			case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER :
+			case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER :
+			case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER :
+			case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER :
+			case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC :
+			case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC :
+			case VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK_EXT :
+			case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV :
+			case VK_DESCRIPTOR_TYPE_RANGE_SIZE :
+			case VK_DESCRIPTOR_TYPE_MAX_ENUM :
+				CHECK( !"not supported" );
+		}
+		END_ENUM_CHECKS();
+	}
+	
+/*
+=================================================
 	_Parse_ResDescriptorSet
 =================================================
 */
@@ -888,68 +998,133 @@ namespace RDE
 		CHECK_ERR( _ParseValue( id_node, OUT res_id ));
 		CHECK_ERR( res_type == VK_OBJECT_TYPE_DESCRIPTOR_SET );
 		
-		auto*			Bindings_node = _FindByAttribName( root, "Bindings" );
+		auto	ds_iter = _helper->descSetMap.find( VkDescriptorSet(res_id) );
+		CHECK_ERR( ds_iter != _helper->descSetMap.end() );
+
+		auto*	Bindings_node = _FindByAttribName( root, "Bindings" );
 		CHECK_ERR( Bindings_node );
 
+		auto&	bindings	= ds_iter->second->bindings;
+		auto*	node		= Bindings_node->first_node();
+
 		Array<VkWriteDescriptorSet>	slots;
-		uint						slot_index = 0;
+		slots.reserve( bindings.size() );
 
-		for (auto* node = Bindings_node->first_node(); node; node = node->next_sibling())
+		for (size_t i = 0; i < bindings.size(); ++i)
 		{
-			CHECK_ERR( _GetAttribTypename( *node ) == "DescriptorSetSlot" );
-
-			auto*	bufferInfo_node		 = _FindByAttribName( *node, "bufferInfo" );
-			auto*	imageInfo_node		 =  _FindByAttribName( *node, "imageInfo" );
-			auto*	texelBufferView_node =  _FindByAttribName( *node, "texelBufferView" );
-			CHECK_ERR( bufferInfo_node and imageInfo_node and texelBufferView_node );
-
-			StringView	type	= _GetAttribTypename( *node );
-			auto&		slot	= slots.emplace_back();
+			VkWriteDescriptorSet	slot = {};
 			slot.sType				= VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			slot.dstSet				= VkDescriptorSet(res_id);
-			slot.dstBinding			= slot_index++;	// TODO
-			slot.dstArrayElement	= 0;
-			slot.descriptorCount	= 1;
+			slot.dstBinding			= uint(i);
+			slot.descriptorType		= bindings[i].descriptorType;
+			slot.descriptorCount	= 0;
 
-			if ( bufferInfo_node )
+			BEGIN_ENUM_CHECKS();
+			switch ( slot.descriptorType )
 			{
-				auto*	buffer_node	= _FindByAttribName( *bufferInfo_node, "buffer" );
-				auto*	offset_node	= _FindByAttribName( *bufferInfo_node, "offset" );
-				auto*	range_node	= _FindByAttribName( *bufferInfo_node, "range" );
-				auto&	buffer_slot	= *_allocator.Alloc<VkDescriptorBufferInfo>( 1 );
+				case VK_DESCRIPTOR_TYPE_SAMPLER :
+				case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER :
+				case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE :
+				case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE :
+				case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT :
+					slot.pImageInfo = _allocator.Alloc<VkDescriptorImageInfo>( bindings[i].descriptorCount );
+					break;
 
-				CHECK_ERR( _ParseResource( buffer_node, OUT buffer_slot.buffer ));
-				CHECK_ERR( _ParseValue( offset_node, OUT buffer_slot.offset ));
-				CHECK_ERR( _ParseValue( range_node, OUT buffer_slot.range ));
+				case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER :
+				case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER :
+					slot.pTexelBufferView = _allocator.Alloc<VkBufferView>( bindings[i].descriptorCount );
+					break;
 
-				if ( buffer_slot.buffer )
-					slot.pBufferInfo = &buffer_slot;
+				case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER :
+				case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER :
+				case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC :
+				case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC :
+					slot.pBufferInfo = _allocator.Alloc<VkDescriptorBufferInfo>( bindings[i].descriptorCount );
+					break;
+
+				case VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK_EXT :
+				case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV :
+				case VK_DESCRIPTOR_TYPE_RANGE_SIZE :
+				case VK_DESCRIPTOR_TYPE_MAX_ENUM :
+					RETURN_ERR( "not supported" );
 			}
+			END_ENUM_CHECKS();
+			
+			bool	is_valid = true;
 
-			if ( imageInfo_node )
+			for (uint j = 0; j < bindings[i].descriptorCount; ++j)
 			{
-				auto*	sampler_node	= _FindByAttribName( *imageInfo_node, "sampler" );
-				auto*	imageView_node	= _FindByAttribName( *imageInfo_node, "imageView" );
-				auto*	imageLayout_node= _FindByAttribName( *imageInfo_node, "imageLayout" );
-				auto&	image_slot		= *_allocator.Alloc<VkDescriptorImageInfo>( 1 );
+				if ( not node )
+					continue;
+
+				++slot.descriptorCount;
+
+				CHECK_ERR( _GetAttribTypename( *node ) == "DescriptorSetSlot" );
+
+				auto*	bufferInfo_node		 = _FindByAttribName( *node, "bufferInfo" );
+				auto*	imageInfo_node		 = _FindByAttribName( *node, "imageInfo" );
+				auto*	texelBufferView_node = _FindByAttribName( *node, "texelBufferView" );
+				CHECK_ERR( bufferInfo_node and imageInfo_node and texelBufferView_node );
+
+				if ( bufferInfo_node )
+				{
+					auto*					buffer_node	= _FindByAttribName( *bufferInfo_node, "buffer" );
+					auto*					offset_node	= _FindByAttribName( *bufferInfo_node, "offset" );
+					auto*					range_node	= _FindByAttribName( *bufferInfo_node, "range" );
+					VkDescriptorBufferInfo	buffer_slot	= {};
+
+					CHECK_ERR( _ParseResource( buffer_node, OUT buffer_slot.buffer ));
+					CHECK_ERR( _ParseValue( offset_node, OUT buffer_slot.offset ));
+					CHECK_ERR( _ParseValue( range_node, OUT buffer_slot.range ));
+
+					if ( buffer_slot.buffer and slot.pBufferInfo )
+						const_cast<VkDescriptorBufferInfo*>(slot.pBufferInfo)[j] = buffer_slot;
+
+					if ( not buffer_slot.buffer and slot.pBufferInfo )
+						is_valid = false;
+				}
+
+				if ( imageInfo_node )
+				{
+					auto*					sampler_node	= _FindByAttribName( *imageInfo_node, "sampler" );
+					auto*					imageView_node	= _FindByAttribName( *imageInfo_node, "imageView" );
+					auto*					imageLayout_node= _FindByAttribName( *imageInfo_node, "imageLayout" );
+					VkDescriptorImageInfo	image_slot		= {};
 				
-				CHECK_ERR( _ParseResource( sampler_node, OUT image_slot.sampler ));
-				CHECK_ERR( _ParseResource( imageView_node, OUT image_slot.imageView ));
-				CHECK_ERR( _ParseValue( imageLayout_node, OUT image_slot.imageLayout ));
-				
-				if ( image_slot.sampler or image_slot.imageView )
-					slot.pImageInfo = &image_slot;
+					CHECK_ERR( _ParseResource( sampler_node, OUT image_slot.sampler ));
+					CHECK_ERR( _ParseResource( imageView_node, OUT image_slot.imageView ));
+					CHECK_ERR( _ParseValue( imageLayout_node, OUT image_slot.imageLayout ));
+					_ValidateImageLayout( slot.descriptorType, INOUT image_slot.imageLayout );
+
+					if ( (image_slot.sampler or image_slot.imageView) and slot.pImageInfo )
+						const_cast<VkDescriptorImageInfo*>(slot.pImageInfo)[j] = image_slot;
+
+					if ( not (image_slot.sampler or image_slot.imageView) and slot.pImageInfo )
+						is_valid = false;
+				}
+
+				if ( texelBufferView_node )
+				{
+					VkBufferView	bufferView_slot = {};
+					CHECK_ERR( _ParseResource( texelBufferView_node, OUT bufferView_slot ));
+
+					if ( bufferView_slot and slot.pTexelBufferView )
+						const_cast<VkBufferView*>(slot.pTexelBufferView)[j] = bufferView_slot;
+
+					if ( not bufferView_slot and slot.pTexelBufferView )
+						is_valid = false;
+				}
+
+				node = node->next_sibling();
 			}
 
-			if ( texelBufferView_node )
+			if ( not is_valid )
 			{
-				auto&	bufferView_slot = *_allocator.Alloc<VkBufferView>( 1 );
-
-				CHECK_ERR( _ParseResource( texelBufferView_node, OUT bufferView_slot ));
-
-				if ( bufferView_slot )
-					slot.pTexelBufferView = &bufferView_slot;
+				FG_LOGI( "skip empty descriptor set '"s << ToString(res_id) << "', binding " << ToString(i) );
+				continue;
 			}
+
+			slots.push_back( slot );
 		}
 		
 		if ( slots.empty() )
@@ -1032,52 +1207,16 @@ namespace RDE
 	
 /*
 =================================================
-	_ParseImageState_v13
+	_ParseImageState
 =================================================
 */
-	bool  RdCaptureReader::_ParseImageState_v13 (const Node_t *root, OUT ImageLayouts &outState)
+	bool  RdCaptureReader::_ParseImageState (const Node_t *root, OUT ImageLayouts &outState)
 	{
-		auto*	queueFamilyIndex_node	= _FindByAttribName( *root, "queueFamilyIndex" );
-		CHECK_ERR( _ParseValue( queueFamilyIndex_node, OUT outState.queueFamilyIndex ));
+		CHECK_ERR( root );
 
-		auto*	subresourceStates_node	= _FindByAttribName( *root, "subresourceStates" );
-		CHECK_ERR( subresourceStates_node );
-
-		for (auto* node = subresourceStates_node->first_node(); node; node = node->next_sibling())
-		{
-			auto*	dstQueueFamilyIndex_node	= _FindByAttribName( *node, "dstQueueFamilyIndex" );
-			auto*	subresourceRange_node		= _FindByAttribName( *node, "subresourceRange" );
-			auto*	oldLayout_node				= _FindByAttribName( *node, "oldLayout" );
-			auto*	newLayout_node				= _FindByAttribName( *node, "newLayout" );
-			auto&	region						= outState.subresourceStates.emplace_back();
-
-			CHECK_ERR( _ParseValue( dstQueueFamilyIndex_node, OUT region.dstQueueFamilyIndex ));
-			CHECK_ERR( _ParseStruct( subresourceRange_node, OUT region.subresourceRange ));
-			CHECK_ERR( _ParseValue( oldLayout_node, OUT region.oldLayout ));
-			CHECK_ERR( _ParseValue( newLayout_node, OUT region.newLayout ));
-		}
+		auto*	name_attr = root->first_attribute( "name" );
+		CHECK_ERR( name_attr and name_attr->value() == "ImageState"s );
 		
-		auto*	layerCount_node		= _FindByAttribName( *root, "layerCount" );
-		auto*	levelCount_node		= _FindByAttribName( *root, "levelCount" );
-		auto*	sampleCount_node	= _FindByAttribName( *root, "sampleCount" );
-		auto*	extent_node			= _FindByAttribName( *root, "extent" );
-		auto*	format_node			= _FindByAttribName( *root, "format" );
-
-		CHECK_ERR( _ParseValue( layerCount_node, OUT outState.layerCount ));
-		CHECK_ERR( _ParseValue( levelCount_node, OUT outState.levelCount ));
-		CHECK_ERR( _ParseValue( sampleCount_node, OUT outState.sampleCount ));
-		CHECK_ERR( _ParseValue( format_node, OUT outState.format ));
-		CHECK_ERR( _ParseStruct( extent_node, OUT outState.extent ));
-		return true;
-	}
-	
-/*
-=================================================
-	_ParseImageState_v16
-=================================================
-*/
-	bool  RdCaptureReader::_ParseImageState_v16 (const Node_t *root, OUT ImageLayouts &outState)
-	{
 		auto*	queueFamilyIndex_node	= _FindByAttribName( *root, "queueFamilyIndex" );
 		CHECK_ERR( _ParseValue( queueFamilyIndex_node, OUT outState.queueFamilyIndex ));
 
@@ -1099,13 +1238,15 @@ namespace RDE
 		}
 		
 		auto*	imageInfo_node	= _FindByAttribName( *root, "imageInfo" );
-		CHECK_ERR( imageInfo_node );
-
-		auto*	layerCount_node		= _FindByAttribName( *imageInfo_node, "layerCount" );
-		auto*	levelCount_node		= _FindByAttribName( *imageInfo_node, "levelCount" );
-		auto*	sampleCount_node	= _FindByAttribName( *imageInfo_node, "sampleCount" );
-		auto*	extent_node			= _FindByAttribName( *imageInfo_node, "extent" );
-		auto*	format_node			= _FindByAttribName( *imageInfo_node, "format" );
+		
+		if ( imageInfo_node )
+			root = imageInfo_node;
+		
+		auto*	layerCount_node		= _FindByAttribName( *root, "layerCount" );
+		auto*	levelCount_node		= _FindByAttribName( *root, "levelCount" );
+		auto*	sampleCount_node	= _FindByAttribName( *root, "sampleCount" );
+		auto*	extent_node			= _FindByAttribName( *root, "extent" );
+		auto*	format_node			= _FindByAttribName( *root, "format" );
 
 		CHECK_ERR( _ParseValue( layerCount_node, OUT outState.layerCount ));
 		CHECK_ERR( _ParseValue( levelCount_node, OUT outState.levelCount ));
@@ -1113,24 +1254,6 @@ namespace RDE
 		CHECK_ERR( _ParseValue( format_node, OUT outState.format ));
 		CHECK_ERR( _ParseStruct( extent_node, OUT outState.extent ));
 		return true;
-	}
-	
-/*
-=================================================
-	_ParseImageState
-=================================================
-*/
-	bool  RdCaptureReader::_ParseImageState (const Node_t *root, OUT ImageLayouts &outState)
-	{
-		CHECK_ERR( root );
-
-		auto*	name_attr = root->first_attribute( "name" );
-		CHECK_ERR( name_attr and name_attr->value() == "ImageState"s );
-
-		if ( _fileVersion >= 16 )
-			return _ParseImageState_v16( root, OUT outState );
-
-		return _ParseImageState_v13( root, OUT outState );
 	}
 
 /*
@@ -1253,6 +1376,132 @@ namespace RDE
 		for (auto listener : _listeners) {
 			listener->FlushMappedMemoryRanges( _chunkCounter, threadId, timestamp, device, memoryRangeCount, pMemoryRanges,
 											   BytesU{byteLength}, ContentID(content_id) );
+		}
+		return true;
+	}
+	
+/*
+=================================================
+	_Parse_DebugMarkerSetObjectNameEXT
+=================================================
+*/
+	bool  RdCaptureReader::_Parse_DebugMarkerSetObjectNameEXT (const Node_t &root, uint64_t threadId, uint64_t timestamp)
+	{
+		Node_t*		Object_node	= _FindByAttribName( root, "Object" );
+		Node_t*		ObjectName_node	= _FindByAttribName( root, "ObjectName" );
+		
+		uint64_t	res_id = ~0ull;
+		CHECK_ERR( _ParseValue( Object_node, OUT res_id ));
+
+		for (auto listener : _listeners) {
+			listener->DebugMarkerSetObjectNameEXT( _chunkCounter, threadId, timestamp, VkResourceID(res_id), ObjectName_node->value() );
+		}
+		return true;
+	}
+	
+/*
+=================================================
+	_Parse_UpdateDescriptorSetWithTemplate
+=================================================
+*/
+	bool  RdCaptureReader::_Parse_UpdateDescriptorSetWithTemplate (const Node_t &root, uint64_t threadId, uint64_t timestamp)
+	{
+		Node_t*		device_node	= _FindByAttribName( root, "device" );
+		VkDevice	device		= {};
+		CHECK_ERR( _ParseResource( device_node, OUT device ));
+		
+		Node_t*			descriptorSet_node	= _FindByAttribName( root, "descriptorSet" );
+		VkDescriptorSet	descriptorSet		= {};
+		CHECK_ERR( _ParseResource( descriptorSet_node, OUT descriptorSet ));
+		
+		Node_t*						descriptorUpdateTemplate_node	= _FindByAttribName( root, "descriptorUpdateTemplate" );
+		VkDescriptorUpdateTemplate	descriptorUpdateTemplate		= {};
+		CHECK_ERR( _ParseResource( descriptorUpdateTemplate_node, OUT descriptorUpdateTemplate ));
+
+		Array<VkWriteDescriptorSet>	write_ds;
+
+		auto*	write_node = _FindByAttribName( root, "Decoded Writes" );
+		CHECK_ERR( write_node );
+
+		for (auto* node = write_node->first_node(); node; node = node->next_sibling())
+		{
+			auto*	type = node->first_attribute( "typename" );
+			CHECK_ERR( type and type->value() == "VkWriteDescriptorSet"s );
+
+			VkWriteDescriptorSet&	write = write_ds.emplace_back();
+
+			write			= {};
+			write.sType		= VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			write.dstSet	= descriptorSet;
+			
+			Node_t*		dstBinding_node = _FindByAttribName( *node, "dstBinding" );
+			CHECK_ERR( _ParseValue( dstBinding_node, OUT write.dstBinding ));
+
+			Node_t*		dstArrayElement_node = _FindByAttribName( *node, "dstArrayElement" );
+			CHECK_ERR( _ParseValue( dstArrayElement_node, OUT write.dstArrayElement ));
+
+			Node_t*		descriptorCount_node = _FindByAttribName( *node, "descriptorCount" );
+			CHECK_ERR( _ParseValue( descriptorCount_node, OUT write.descriptorCount ));
+
+			Node_t*		descriptorType_node = _FindByAttribName( *node, "descriptorType" );
+			CHECK_ERR( _ParseValue( descriptorType_node, OUT write.descriptorType ));
+
+			Node_t*		pImageInfo_node			= _FindByAttribName( *node, "pImageInfo" );
+			Node_t*		pBufferInfo_node		= _FindByAttribName( *node, "pBufferInfo" );
+			Node_t*		pTexelBufferView_node	= _FindByAttribName( *node, "pTexelBufferView" );
+
+			if ( pImageInfo_node and pImageInfo_node->first_node() )
+			{
+				auto*	dst = _allocator.Alloc<VkDescriptorImageInfo>( write.descriptorCount );
+				write.pImageInfo = dst;
+
+				for (auto* info = pImageInfo_node->first_node(); info; info = info->next_sibling())
+				{
+					Node_t*		sampler_node = _FindByAttribName( *info, "sampler" );
+					CHECK_ERR( _ParseResource( sampler_node, OUT dst->sampler ));
+
+					Node_t*		imageView_node = _FindByAttribName( *info, "imageView" );
+					CHECK_ERR( _ParseResource( imageView_node, OUT dst->imageView ));
+
+					Node_t*		imageLayout_node = _FindByAttribName( *info, "imageLayout" );
+					CHECK_ERR( _ParseValue( imageLayout_node, OUT dst->imageLayout ));
+					_ValidateImageLayout( write.descriptorType, INOUT dst->imageLayout );
+
+					++dst;
+				}
+			}
+
+			if ( pBufferInfo_node and pBufferInfo_node->first_node() )
+			{
+				auto*	dst = _allocator.Alloc<VkDescriptorBufferInfo>( write.descriptorCount );
+				write.pBufferInfo = dst;
+
+				for (auto* info = pBufferInfo_node->first_node(); info; info = info->next_sibling())
+				{
+					Node_t*		buffer_node = _FindByAttribName( *info, "buffer" );
+					CHECK_ERR( _ParseResource( buffer_node, OUT dst->buffer ));
+					CHECK_ERR( dst->buffer );
+
+					Node_t*		offset_node = _FindByAttribName( *info, "offset" );
+					CHECK_ERR( _ParseValue( offset_node, OUT dst->offset ));
+
+					Node_t*		range_node = _FindByAttribName( *info, "range" );
+					CHECK_ERR( _ParseValue( range_node, OUT dst->range ));
+
+					++dst;
+				}
+			}
+
+			if ( pTexelBufferView_node and pTexelBufferView_node->first_node() )
+			{
+				CHECK( !"TODO" );
+			}
+		}
+
+		CHECK_ERR( write_ds.size() );
+
+		for (auto listener : _listeners) {
+			listener->UpdateDescriptorSetWithTemplate( _chunkCounter, threadId, timestamp, device, descriptorSet, descriptorUpdateTemplate, write_ds );
 		}
 		return true;
 	}

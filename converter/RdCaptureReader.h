@@ -36,6 +36,8 @@ namespace RDE
 		using Listeners_t		= HashSet< ListenerPtr >;
 
 		using ContentMap_t		= HashMap< ContentID, uint >;	// {content id, file id}
+		
+		class HelperVulkanListener;
 
 
 	// variables
@@ -46,12 +48,15 @@ namespace RDE
 
 		Allocator_t			_allocator;
 		Listeners_t			_listeners;
+
 		uint				_chunkCounter;
 
 		mz_zip_archive		_contentZip;
 		ContentMap_t		_contentMap;
 
 		uint				_fileVersion	= 0;
+
+		SharedPtr<HelperVulkanListener>	_helper;
 
 
 	// methods
@@ -110,8 +115,6 @@ namespace RDE
 		ND_ EResourceType  _AttribToResourceType (const Node_t *node) const;
 
 		bool  _ParseImageState (const Node_t *node, OUT ImageLayouts &state);
-		bool  _ParseImageState_v13 (const Node_t *node, OUT ImageLayouts &state);
-		bool  _ParseImageState_v16 (const Node_t *node, OUT ImageLayouts &state);
 
 		bool  _ReadContent (const FS::path &);
 		bool  _LoadByteBuffer (const Node_t &node, OUT void* data, size_t dataSize);
@@ -132,6 +135,8 @@ namespace RDE
 		bool  _Parse_DeviceMemoryRef (const Node_t &, uint64_t threadId, uint64_t timestamp);
 		bool  _Parse_ImageReferences (const Node_t &, uint64_t threadId, uint64_t timestamp);
 		bool  _Parse_FlushMappedMemoryRanges (const Node_t &node, uint64_t threadId, uint64_t timestamp);
+		bool  _Parse_DebugMarkerSetObjectNameEXT (const Node_t &node, uint64_t threadId, uint64_t timestamp);
+		bool  _Parse_UpdateDescriptorSetWithTemplate (const Node_t &node, uint64_t threadId, uint64_t timestamp);
 
 		bool  _InitParser (uint version);
 

@@ -340,13 +340,18 @@ namespace RDE
 		}
 		
 		auto	res_iter = _resources.find( type );
-		CHECK_ERR( res_iter != _resources.end(), "<error>" );
+		CHECK_ERR( res_iter != _resources.end(), "VK_NULL_HANDLE" );
 
 		auto&	items = res_iter->second.map;
 		auto	iter = items.find( id );
 
-		CHECK_ERR( iter != items.end(), "<error>" );
-		CHECK_ERR( iter->second.size(), "<error>" );
+		if ( iter == items.end() )
+		{
+			FG_LOGI( "Can't find resource "s << GetResourceTypeID( type ) << "(" << ToString(id) << ")" );
+			return "VK_NULL_HANDLE";
+		}
+
+		CHECK_ERR( iter->second.size(), "VK_NULL_HANDLE" );
 
 		auto&	item = iter->second.back();
 

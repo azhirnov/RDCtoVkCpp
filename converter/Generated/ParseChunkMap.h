@@ -89,7 +89,6 @@ _chunkParser["vkCmdDispatchIndirect"] = &RdCaptureReader::Parse_vkCmdDispatchInd
 _chunkParser["vkCmdDebugMarkerBeginEXT"] = &RdCaptureReader::Parse_vkCmdDebugMarkerBeginEXT;
 _chunkParser["vkCmdDebugMarkerInsertEXT"] = &RdCaptureReader::Parse_vkCmdDebugMarkerInsertEXT;
 _chunkParser["vkCmdDebugMarkerEndEXT"] = &RdCaptureReader::Parse_vkCmdDebugMarkerEndEXT;
-_chunkParser["vkDebugMarkerSetObjectNameEXT"] = &RdCaptureReader::Parse_vkDebugMarkerSetObjectNameEXT;
 _chunkParser["vkCreateSwapchainKHR"] = &RdCaptureReader::Parse_vkCreateSwapchainKHR;
 _chunkParser["vkRegisterDeviceEventEXT"] = &RdCaptureReader::Parse_vkRegisterDeviceEventEXT;
 _chunkParser["vkRegisterDisplayEventEXT"] = &RdCaptureReader::Parse_vkRegisterDisplayEventEXT;

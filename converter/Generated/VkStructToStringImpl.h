@@ -3810,7 +3810,7 @@ void  Serialize2_VkMappedMemoryRange (const VkMappedMemoryRange *obj, StringView
 	CHECK( obj->sType == VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE );
 	result << indent << name << ".memory = " << remapper( VK_OBJECT_TYPE_DEVICE_MEMORY, obj->memory ) << ";\n";
 	result << indent << name << ".offset = " << IntToString(obj->offset) << ";\n";
-	result << indent << name << ".size = " << IntToString(obj->size) << ";\n";
+	result << indent << name << ".size = " << (obj->size == VK_WHOLE_SIZE ? "VK_WHOLE_SIZE" : IntToString(obj->size)) << ";\n";
 }
 
 void  Serialize2_VkDeviceQueueCreateInfo (const VkDeviceQueueCreateInfo *obj, StringView name, NameSerializer &nameSer, ResRemapper &remapper, StringView indent, INOUT String &result, INOUT String &before)
@@ -6030,8 +6030,8 @@ void  Serialize2_VkBufferMemoryBarrier (const VkBufferMemoryBarrier *obj, String
 	CHECK( obj->sType == VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER );
 	result << indent << name << ".srcAccessMask = " << Serialize_VkAccessFlags(obj->srcAccessMask) << ";\n";
 	result << indent << name << ".dstAccessMask = " << Serialize_VkAccessFlags(obj->dstAccessMask) << ";\n";
-	result << indent << name << ".srcQueueFamilyIndex = " << IntToString(obj->srcQueueFamilyIndex) << ";\n";
-	result << indent << name << ".dstQueueFamilyIndex = " << IntToString(obj->dstQueueFamilyIndex) << ";\n";
+	result << indent << name << ".srcQueueFamilyIndex = " << (obj->srcQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED ? "VK_QUEUE_FAMILY_IGNORED" : IntToString(obj->srcQueueFamilyIndex)) << ";\n";
+	result << indent << name << ".dstQueueFamilyIndex = " << (obj->dstQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED ? "VK_QUEUE_FAMILY_IGNORED" : IntToString(obj->dstQueueFamilyIndex)) << ";\n";
 	result << indent << name << ".buffer = " << remapper( VK_OBJECT_TYPE_BUFFER, obj->buffer ) << ";\n";
 	result << indent << name << ".offset = " << IntToString(obj->offset) << ";\n";
 	result << indent << name << ".size = " << IntToString(obj->size) << ";\n";
@@ -6047,8 +6047,8 @@ void  Serialize2_VkImageMemoryBarrier (const VkImageMemoryBarrier *obj, StringVi
 	result << indent << name << ".dstAccessMask = " << Serialize_VkAccessFlags(obj->dstAccessMask) << ";\n";
 	result << indent << name << ".oldLayout = " << Serialize_VkImageLayout(obj->oldLayout) << ";\n";
 	result << indent << name << ".newLayout = " << Serialize_VkImageLayout(obj->newLayout) << ";\n";
-	result << indent << name << ".srcQueueFamilyIndex = " << IntToString(obj->srcQueueFamilyIndex) << ";\n";
-	result << indent << name << ".dstQueueFamilyIndex = " << IntToString(obj->dstQueueFamilyIndex) << ";\n";
+	result << indent << name << ".srcQueueFamilyIndex = " << (obj->srcQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED ? "VK_QUEUE_FAMILY_IGNORED" : IntToString(obj->srcQueueFamilyIndex)) << ";\n";
+	result << indent << name << ".dstQueueFamilyIndex = " << (obj->dstQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED ? "VK_QUEUE_FAMILY_IGNORED" : IntToString(obj->dstQueueFamilyIndex)) << ";\n";
 	result << indent << name << ".image = " << remapper( VK_OBJECT_TYPE_IMAGE, obj->image ) << ";\n";
 	Serialize2_VkImageSubresourceRange( &obj->subresourceRange, String(name) << ".subresourceRange", nameSer, remapper, indent, INOUT result, INOUT before );
 }

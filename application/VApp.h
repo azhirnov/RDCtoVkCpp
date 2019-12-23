@@ -44,6 +44,7 @@ enum class FramebufferID : ResourceID_t {};
 enum class CommandPoolID : ResourceID_t {};
 //enum class SwapchainKHRID : ResourceID_t {};
 //enum class SurfaceKHRID : ResourceID_t {};
+enum class DescriptorUpdateTemplID : ResourceID_t {};
 
 enum class ContentID : uint32_t {};
 
@@ -77,9 +78,25 @@ template <>  struct _ObjInfo< FramebufferID >			{ static constexpr uint32_t	 ind
 template <>  struct _ObjInfo< CommandPoolID >			{ static constexpr uint32_t	 index = 24;	using vktype = VkCommandPool;			static constexpr auto  type = VK_OBJECT_TYPE_COMMAND_POOL; };
 //template <>  struct _ObjInfo< SwapchainKHRID >		{ static constexpr uint32_t	 index = 25;	using vktype = VkSwapchainKHR;			static constexpr auto  type = VK_OBJECT_TYPE_SWAPCHAIN_KHR; };
 //template <>  struct _ObjInfo< SurfaceKHRID >			{ static constexpr uint32_t	 index = 26;	using vktype = VkSurfaceKHR;			static constexpr auto  type = VK_OBJECT_TYPE_SURFACE_KHR; };
-
+template <>  struct _ObjInfo< DescriptorUpdateTemplID >	{ static constexpr uint32_t	 index = 27;	using vktype = VkDescriptorUpdateTemplate; static constexpr auto  type = VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_KHR; };
 
 using namespace FGC;
+
+
+struct FIValue
+{
+	union {
+		float	f;
+		int		i;
+		uint	u;
+	};
+
+	FIValue () : i{0} {}
+	FIValue (float val) : f{val} {}
+	FIValue (int val) : i{val} {}
+	FIValue (uint val) : u{val} {}
+};
+
 
 #include <filesystem>
 namespace FS = std::filesystem;
@@ -200,8 +217,7 @@ public:
 					   ArrayView<const char*>	instanceExtensions	= VulkanDevice::GetRecomendedInstanceExtensions(),
 					   ArrayView<const char*>	deviceExtensions	= VulkanDevice::GetRecomendedDeviceExtensions());
 
-	bool CreateSwapchain (const uint2							&size,
-						  const VkFormat						colorFormat			= VK_FORMAT_B8G8R8A8_UNORM,
+	bool CreateSwapchain (const VkFormat						colorFormat			= VK_FORMAT_B8G8R8A8_UNORM,
 						  const VkColorSpaceKHR					colorSpace			= VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
 						  const uint							minImageCount		= 2,
 						  const VkSurfaceTransformFlagBitsKHR	preTransform		= VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,

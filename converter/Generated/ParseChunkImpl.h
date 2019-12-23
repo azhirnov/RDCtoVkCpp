@@ -941,7 +941,7 @@ bool RdCaptureReader::Parse_vkCmdSetBlendConstants (const Node_t &root, uint64_t
 	Node_t* commandBuffer_node = _FindByAttribName( root, "commandBuffer" );
 	VkCommandBuffer  commandBuffer = {};
 	_ParseResource( commandBuffer_node, OUT commandBuffer );
-	Node_t* blendConstants_node = _FindByAttribName( root, "blendConstants" );
+	Node_t* blendConstants_node = _FindByAttribName( root, "blendConst" );
 	float  blendConstants[4] = {};
 	_ParseValue( blendConstants_node, OUT blendConstants );
 	for (auto listener : _listeners) {
@@ -1764,7 +1764,7 @@ bool RdCaptureReader::Parse_vkCmdDebugMarkerBeginEXT (const Node_t &root, uint64
 	Node_t* commandBuffer_node = _FindByAttribName( root, "commandBuffer" );
 	VkCommandBuffer  commandBuffer = {};
 	_ParseResource( commandBuffer_node, OUT commandBuffer );
-	Node_t* pMarkerInfo_node = _FindByAttribName( root, "pMarkerInfo" );
+	Node_t* pMarkerInfo_node = _FindByAttribName( root, "pMarker" );
 	VkDebugMarkerMarkerInfoEXT *  pMarkerInfo = {};
 	_ParseStruct( pMarkerInfo_node, OUT const_cast<VkDebugMarkerMarkerInfoEXT * &>(pMarkerInfo) );
 	for (auto listener : _listeners) {
@@ -1794,20 +1794,6 @@ bool RdCaptureReader::Parse_vkCmdDebugMarkerEndEXT (const Node_t &root, uint64_t
 	_ParseResource( commandBuffer_node, OUT commandBuffer );
 	for (auto listener : _listeners) {
 		listener->CmdDebugMarkerEndEXT( _chunkCounter, threadId, timestamp, commandBuffer );
-	}
-	return true;
-}
-
-bool RdCaptureReader::Parse_vkDebugMarkerSetObjectNameEXT (const Node_t &root, uint64_t threadId, uint64_t timestamp)
-{
-	Node_t* device_node = _FindByAttribName( root, "device" );
-	VkDevice  device = {};
-	_ParseResource( device_node, OUT device );
-	Node_t* pNameInfo_node = _FindByAttribName( root, "pNameInfo" );
-	VkDebugMarkerObjectNameInfoEXT *  pNameInfo = {};
-	_ParseStruct( pNameInfo_node, OUT const_cast<VkDebugMarkerObjectNameInfoEXT * &>(pNameInfo) );
-	for (auto listener : _listeners) {
-		listener->DebugMarkerSetObjectNameEXT( _chunkCounter, threadId, timestamp, device, pNameInfo );
 	}
 	return true;
 }

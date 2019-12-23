@@ -19,7 +19,9 @@ namespace RDE
 		};
 
 		_skipFuncs = {
-			"vkFlushMappedMemoryRanges"
+			"vkFlushMappedMemoryRanges",
+			"vkDebugMarkerSetObjectNameEXT",
+			"vkUpdateDescriptorSetWithTemplate"
 		};
 
 		return true;

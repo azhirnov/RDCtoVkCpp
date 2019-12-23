@@ -144,8 +144,7 @@ bool VApp::CreateDevice (InstanceID				instance,
 	CreateSwapchain
 =================================================
 */
-bool VApp::CreateSwapchain (const uint2							&size,
-							VkFormat							colorFormat,
+bool VApp::CreateSwapchain (VkFormat							colorFormat,
 							VkColorSpaceKHR						colorSpace,
 							const uint							minImageCount,
 							const VkSurfaceTransformFlagBitsKHR	transform,
@@ -158,12 +157,6 @@ bool VApp::CreateSwapchain (const uint2							&size,
 	_swapchain.reset( new VulkanSwapchain{ _vulkan });
 
 	CHECK_ERR( _swapchain->ChooseColorFormat( INOUT colorFormat, INOUT colorSpace ));
-
-	if ( Any( _surfaceSize != size ))
-	{
-		_window->SetSize( size );
-		_surfaceSize = size;
-	}
 
 	CHECK_ERR( _swapchain->Create( _surfaceSize, colorFormat, colorSpace, minImageCount, presentMode,
 									transform, compositeAlpha, colorImageUsage, {} ));
@@ -524,6 +517,9 @@ bool  VApp::_LoadContent () const
 	
 	CHECK_ERR( _CreateAllocator() );
 
+	const size_t	total	= _bufferContent.size() + _imageContent.size() + _hostMemContent.size();
+	size_t			counter	= 0;
+
 	for (auto&[name, buf] : _bufferContent)
 	{
 		uint	index = UMax;
@@ -567,7 +563,8 @@ bool  VApp::_LoadContent () const
 		CHECK_ERR( alloc_info.size >= stat.m_uncomp_size );
 		CHECK_ERR( mz_zip_reader_extract_to_mem( &archive, index, alloc_info.pMappedData, Min( alloc_info.size, stat.m_uncomp_size ), 0 ) == MZ_TRUE );
 
-		FG_LOGI( "Loaded buffer: '"s << StringView{name} << "'" );
+		FG_LOGI( "Loaded buffer: '"s << StringView{name} << "', " << ToString(counter) << " of " << ToString(total) );
+		++counter;
 	}
 
 	for (auto&[name, img] : _imageContent)
@@ -613,7 +610,8 @@ bool  VApp::_LoadContent () const
 		CHECK_ERR( alloc_info.size >= stat.m_uncomp_size );
 		CHECK_ERR( mz_zip_reader_extract_to_mem( &archive, index, alloc_info.pMappedData, Min( alloc_info.size, stat.m_uncomp_size ), 0 ) == MZ_TRUE );
 
-		FG_LOGI( "Loaded image: '"s << StringView{name} << "'" );
+		FG_LOGI( "Loaded image: '"s << StringView{name} << "', " << ToString(counter) << " of " << ToString(total) );
+		++counter;
 	}
 
 	for (auto&[name, mem] : _hostMemContent)
@@ -627,7 +625,8 @@ bool  VApp::_LoadContent () const
 		CHECK_ERR( mem.size() == stat.m_uncomp_size );
 		CHECK_ERR( mz_zip_reader_extract_to_mem( &archive, index, mem.data(), mem.size(), 0 ) == MZ_TRUE );
 
-		FG_LOGI( "Loaded host memory: '"s << StringView{name} << "'" );
+		FG_LOGI( "Loaded host memory: '"s << StringView{name} << "', " << ToString(counter) << " of " << ToString(total) );
+		++counter;
 	}
 
     mz_zip_reader_end( &archive );
@@ -831,6 +830,12 @@ bool  VApp::CreateSwapchainImage (ImageID image, uint2 dim, VkFormat format, VkI
 */
 bool  VApp::BeginFrame ()
 {
+	if ( not _window )
+		return false;
+
+	if ( not _window->Update() )
+		return false;
+
 	for (auto&[family, q] : _queueCmd)
 	{
 		if ( q.started ) {

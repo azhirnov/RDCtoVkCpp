@@ -47,6 +47,10 @@ namespace RDE
 		virtual void FlushMappedMemoryRanges (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, uint32_t memoryRangeCount,
 											  const VkMappedMemoryRange * pMemoryRanges, BytesU mappedDataSize, ContentID mappedData) {}
 		
+		virtual void DebugMarkerSetObjectNameEXT (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkResourceID resId, StringView name) {}
+	
+		virtual void UpdateDescriptorSetWithTemplate (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkDescriptorSet descriptorSet, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const void * pData) {}
+	
 )#";
 
 		for (auto& packet : _packetIDs)
