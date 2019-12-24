@@ -2,6 +2,7 @@
 
 #include "VApp.h"
 #include "framework/Window/WindowGLFW.h"
+#include "framework/Window/WindowSDL2.h"
 #include "stl/Stream/FileStream.h"
 #include "stl/Algorithms/StringUtils.h"
 
@@ -46,9 +47,6 @@ VApp::VApp ()
 
 #elif defined(FG_ENABLE_SDL2)
 	_window.reset( new WindowSDL2() );
-		
-#elif defined(FG_ENABLE_SFML)
-	_window.reset( new WindowSFML() );
 
 #else
 #		error unknown window library!

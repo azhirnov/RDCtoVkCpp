@@ -1,0 +1,28 @@
+matrix:
+  include:
+    
+    # Windows MSVC x64
+    - os: windows
+      name: Win64 VC2017
+      language: cpp
+      before_install:
+        - choco install python2
+        - export PATH="/c/Python27:/c/Python27/Scripts:$PATH"
+      script:
+        - mkdir -p build
+        - cd build
+        - cmake -G "Visual Studio 15 2017 Win64" -T v141 ..
+        - cmake --build . --config Release
+    
+    # Windows MSVC x64 Debug
+    - os: windows
+      name: Win64 VC2017 Debug
+      language: cpp
+      before_install:
+        - choco install python2
+        - export PATH="/c/Python27:/c/Python27/Scripts:$PATH"
+      script:
+        - mkdir -p build
+        - cd build
+        - cmake -G "Visual Studio 15 2017 Win64" -T v141 ..
+        - cmake --build . --config Debug

@@ -13,9 +13,8 @@ int main ()
 	app.AllocateResources( PhysicalDeviceID(1) );
 	app.AllocateResources( DeviceID(1) );
 	app.AllocateResources( QueueID(1) );
-	app.AllocateResources( SwapchainKHRID(1) );
 	app.AllocateResources( ImageID(1) );
-	app.AllocateResources( SemaphoreID(2) );
+	app.AllocateResources( SemaphoreID(1) );
 	app.AllocateResources( CommandPoolID(1) );
 	app.AllocateResources( CommandBufferID(1) );
 
@@ -23,14 +22,16 @@ int main ()
 	CHECK_ERR( app.CreateWindow( 1024, 768, "Player" ));
 
 	std::vector<VApp::QueueInfo>  queues = {
-		{ QueueID(0), VK_QUEUE_GRAPHICS_BIT, 0.0f }
+		{ 0, VkDeviceQueueCreateFlags(0), VkQueueFlags(VK_QUEUE_GRAPHICS_BIT), 0.0f }
 	};
 	CHECK_ERR( app.CreateDevice( InstanceID(0), PhysicalDeviceID(0), DeviceID(0), "", VK_VERSION_1_1, queues,
 								 {"VK_LAYER_LUNARG_standard_validation"},
 								 {VK_KHR_SURFACE_EXTENSION_NAME, VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
 								 {}
 			));
-	CHECK_ERR( app.CreateSwapchain( SwapchainKHRID(0) ));
+	CHECK_ERR( app.CreateSwapchain() );
+
+	CHECK_ERR( app.MapQueueID( 0, QueueID(0) ));
 
 
 	// create semaphores
@@ -39,7 +40,6 @@ int main ()
 		info.sType	= VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
 		VK_CHECK( app.vkCreateSemaphore( app.GetResource(DeviceID(0)), &info, null, OUT &app.EditResource(SemaphoreID(0)) ));
-		VK_CHECK( app.vkCreateSemaphore( app.GetResource(DeviceID(0)), &info, null, OUT &app.EditResource(SemaphoreID(1)) ));
 	}
 	
 	// create command buffer
@@ -57,7 +57,9 @@ int main ()
 		VK_CHECK( app.vkAllocateCommandBuffers( app.GetResource(DeviceID(0)), &cmd_info, OUT &app.EditResource(CommandBufferID(0)) ));
 	}
 
-	CHECK_ERR( app.AcquireImage( ImageID(0), SemaphoreID(0) ));
+	CHECK_ERR( app.CreateSwapchainImage( ImageID(0), uint2(1024, 768), VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_TRANSFER_DST_BIT ));
+
+	CHECK_ERR( app.BeginFrame() );
 
 	// build command buffer
 	{
@@ -113,36 +115,22 @@ int main ()
 
 	// submit commands
 	{
-		VkSemaphore				signal_semaphores[] = { app.GetResource(SemaphoreID(1)) };
-		VkSemaphore				wait_semaphores[]	= { app.GetResource(SemaphoreID(0)) };
-		VkPipelineStageFlags	wait_dst_mask[]		= { VK_PIPELINE_STAGE_TRANSFER_BIT };
+		VkSemaphore				signal_semaphores[] = { app.GetResource(SemaphoreID(0)) };
 		VkCommandBuffer			commands[]			= { app.GetResource(CommandBufferID(0)) };
-		STATIC_ASSERT( CountOf(wait_semaphores) == CountOf(wait_dst_mask) );
+		VkSubmitInfo			submit_info			= {};
 
-		VkSubmitInfo				submit_info = {};
 		submit_info.sType					= VK_STRUCTURE_TYPE_SUBMIT_INFO;
 		submit_info.commandBufferCount		= uint(CountOf(commands));
 		submit_info.pCommandBuffers			= commands;
-		submit_info.waitSemaphoreCount		= uint(CountOf(wait_semaphores));
-		submit_info.pWaitSemaphores			= wait_semaphores;
-		submit_info.pWaitDstStageMask		= wait_dst_mask;
 		submit_info.signalSemaphoreCount	= uint(CountOf(signal_semaphores));
 		submit_info.pSignalSemaphores		= signal_semaphores;
 
 		VK_CHECK( app.vkQueueSubmit( app.GetResource(QueueID(0)), 1, &submit_info, VK_NULL_HANDLE ));
 	}
 
-	CHECK_ERR( app.Present( QueueID(0), ImageID(0), SemaphoreID(1) ));
+	CHECK_ERR( app.EndFrame( EQueueFamily(0) ));
 
-	VK_CHECK( app.vkDeviceWaitIdle( app.GetResource(DeviceID(0)) ));
-
-
-	// destroy vulkan resources
-	{
-		app.vkDestroyCommandPool( app.GetResource(DeviceID(0)), app.GetResource(CommandPoolID(0)), null );
-		app.vkDestroySemaphore( app.GetResource(DeviceID(0)), app.GetResource(SemaphoreID(0)), null );
-		app.vkDestroySemaphore( app.GetResource(DeviceID(0)), app.GetResource(SemaphoreID(1)), null );
-	}
+	app.Destroy();
 
 	return 0;
 }

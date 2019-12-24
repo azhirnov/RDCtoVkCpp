@@ -187,9 +187,9 @@
 // (text, file, line)
 #ifndef FG_LOGD
 # ifdef FG_DEBUG
-#	define FG_LOGD	FG_LOGI
+#	define FG_LOGD			FG_LOGI
 # else
-#	define FG_LOGD( ... )
+#	define FG_LOGD( ... )	{}
 # endif
 #endif
 

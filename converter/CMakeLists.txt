@@ -16,3 +16,8 @@ target_link_libraries( "RdConverter" PUBLIC "MiniZ" )
 target_compile_definitions( "RdConverter" PUBLIC "RDE_APP_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}/../application\"" )
 target_compile_definitions( "RdConverter" PUBLIC "RDE_FRAMEGRAPH_PATH=\"${RDE_FRAMEGRAPH_PATH}\"" )
 target_compile_definitions( "RdConverter" PUBLIC "RDE_FRAMEGRAPH_EXTERNAL_PATH=\"${RDE_FRAMEGRAPH_PATH}/extensions\"" )
+
+if (MSVC)
+	set_property( DIRECTORY PROPERTY VS_STARTUP_PROJECT "RdConverter" )
+	target_compile_options( "RdConverter" PUBLIC $<$<CONFIG:Debug>: /bigobj > )
+endif ()
