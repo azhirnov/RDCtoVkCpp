@@ -3,6 +3,28 @@
 Converts RenderDoc Vulkan capture to compilable and executable C++ code.
 Work in progress.
 
+
+## How to use
+Run RdConverter.exe with ```-i path/to/exported/rdc.zip -o folder/name/for/cpp/code```
+Optional arguments:
+```
+-h, --help  - show help
+--build     - build project
+--clean     - clean output folder before converting
+```
+Warning: console application and converted sources from capture is not portable!
+You should rebuild and run converter again on new environment or fix pathes to files.
+
+
+## Features
+* Produces readable C++ code.
+* Code validation to fix unsignaled fences/semaphores/events and reset they before next frame.
+* Frame played in infinite loop.
+* Used resource debug name if possible.
+* SPIR-V decompiled to GLSL.
+* Resizable window.
+
+
 ## Tested on
 * [x] Doom (2016)
 * [ ] Wolfenstein 2 - incorrect rendering
@@ -13,14 +35,15 @@ Work in progress.
 
 
 ## TODO
-* [x] Upload image
-* [ ] Immutable samplers
-* [ ] Measure frame time
-* [ ] Portability (remap queue family and memory types)
-* [ ] Use memory refs
-* [ ] Upload multisampled image
-* [ ] Sparse memory
-* [ ] 2nd plane formats
+* Immutable samplers
+* Measure frame time
+* Portability (remap queue family and memory types)
+* Upload multisampled image
+* Sparse memory
+* 2nd plane formats
+* Load content in multiple threads to speedup loading.
+* Reload shaders.
+* Fix validation errors.
 
 
 ## Building
