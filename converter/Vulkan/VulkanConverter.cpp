@@ -5,6 +5,7 @@
 #include "Vulkan/ResRemapper.h"
 #include "stl/Memory/LinearAllocator.h"
 #include "stl/Algorithms/StringParser.h"
+#include "stl/Platforms/WindowsHeader.h"
 
 namespace RDE
 {
@@ -166,8 +167,9 @@ namespace RDE
 		FS::path				_shaderFolder;
 		FS::path				_contentFolder;
 
-		bool					_group			= true;
+		bool					_group;
 		bool					_captureStarted	= false;
+		bool					_compileConvertedCode;
 
 		Allocator_t				_allocator;
 		Allocator_t				_initialDSAllocator;
@@ -175,7 +177,7 @@ namespace RDE
 
 	// methods
 	public:
-		VulkanFnToCpp2 (const FS::path &outputFolder);
+		VulkanFnToCpp2 (const FS::path &outputFolder, const ConverterConfig &cfg);
 		~VulkanFnToCpp2 ();
 
 		void FlushCommandBuffer (VkCommandBuffer) override;
@@ -262,6 +264,8 @@ namespace RDE
 		ND_ String _ConvertLayouts (const ImageLayouts &layouts);
 
 		ND_ bool _IsSwapchainImage (VkResourceID id) const;
+
+		bool _CompileSource () const;
 	};
 	
 	
@@ -270,10 +274,17 @@ namespace RDE
 	constructor
 =================================================
 */
-	VulkanFnToCpp2::VulkanFnToCpp2 (const FS::path &outputFolder) :
+	VulkanFnToCpp2::VulkanFnToCpp2 (const FS::path &outputFolder, const ConverterConfig &cfg) :
 		_folder{ outputFolder },
-		_shaderFolder{ FS::path{outputFolder}.append("shaders") }
+		_shaderFolder{ FS::path{outputFolder}.append("shaders") },
+		_group{ cfg.divideByCmdBuffers },
+		_compileConvertedCode{ cfg.compile }
 	{
+		if ( cfg.cleanOutputFolder )
+		{
+			FS::remove_all( _folder );
+		}
+
 		FS::create_directories( _folder );
 		FS::create_directories( _shaderFolder );
 	}
@@ -341,7 +352,6 @@ namespace RDE
 		}
 
 		// initialization
-		if ( _group )
 		{
 			_initSrc =
 				"#include \"Resources.h\"\n\n"s +
@@ -427,15 +437,19 @@ namespace RDE
 			String	app_name = "\"VkPlayer\"";
 
 			str << "cmake_minimum_required( VERSION 3.10.0 FATAL_ERROR )\n\n"
-				<< "file( GLOB_RECURSE SOURCES \"*.*\" )\n"
-				<< "source_group( TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SOURCES} )\n"
-				<< "add_executable( " << app_name << " ${SOURCES} )\n";
+				<< "file( GLOB CPP_SOURCES \"*.*\" )\n"
+				<< "file( GLOB SHADER_SOURCES \"shaders/*.*\" )\n"
+				<< "source_group( TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${CPP_SOURCES} )\n"
+				<< "source_group( TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SHADER_SOURCES} )\n"
+				<< "add_executable( " << app_name << " ${CPP_SOURCES} ${SHADER_SOURCES} )\n";
 			
-			str << "target_include_directories( " << app_name << " PRIVATE \"" RDE_APP_PATH << "\" )\n"
-				<< "target_include_directories( " << app_name << " PRIVATE \"" RDE_FRAMEGRAPH_PATH << "\" )\n"
-				<< "target_include_directories( " << app_name << " PRIVATE \"" RDE_FRAMEGRAPH_EXTERNAL_PATH << "\" )\n"
+			str << "set( RDE_FRAMEGRAPH_PATH \"" << RDE_FRAMEGRAPH_PATH << "\" CACHE \"\" INTERNAL FORCE )\n"
+				<< "include( \"" << RDE_SOURCE_PATH << "/cmake/attach_fg.cmake\" )\n"
+				<< "add_subdirectory( \"" << RDE_SOURCE_PATH << "/external/miniz\" \"miniz\" )\n"
+				<< "add_subdirectory( \"" << RDE_SOURCE_PATH << "/application\" \"application\" )\n"
 				<< "target_link_libraries( " << app_name << " \"STL\" \"VulkanLoader\" \"Framework\" \"Application\" )\n"
 				<< "if (MSVC)\n"
+				<< "	set_property( DIRECTORY PROPERTY VS_STARTUP_PROJECT \"VkPlayer\" )\n"
 				<< "	set_target_properties( " << app_name << " PROPERTIES LINK_FLAGS \"/STACK:10000000,10000000\" )\n"
 				<< "endif ()\n";
 			
@@ -455,8 +469,101 @@ namespace RDE
 		_frameResetSrc.clear();
 
 		_captureStarted = false;
+
+		if ( _compileConvertedCode )
+		{
+			_CompileSource();
+		}
 	}
 	
+/*
+=================================================
+	Execute
+=================================================
+*/
+	static bool Execute (StringView command, uint timeoutMS)
+	{
+		char	buf[MAX_PATH] = {};
+		::GetSystemDirectoryA( buf, UINT(CountOf(buf)) );
+		
+		String		command_line;
+		command_line << '"' << buf << "\\cmd.exe\" /C " << command;
+
+		STARTUPINFOA			startup_info = {};
+		PROCESS_INFORMATION		proc_info	 = {};
+		
+		bool process_created = ::CreateProcessA(
+			NULL,
+			command_line.data(),
+			NULL,
+			NULL,
+			FALSE,
+			CREATE_NO_WINDOW,
+			NULL,
+			NULL,
+			OUT &startup_info,
+			OUT &proc_info
+		);
+
+		if ( not process_created )
+			return false;
+
+		if ( ::WaitForSingleObject( proc_info.hThread, timeoutMS ) != WAIT_OBJECT_0 )
+			return false;
+		
+		DWORD process_exit;
+		::GetExitCodeProcess( proc_info.hProcess, OUT &process_exit );
+		return true;
+	}
+	
+/*
+=================================================
+	_CompileSource
+=================================================
+*/
+	bool VulkanFnToCpp2::_CompileSource () const
+	{
+#	ifdef PLATFORM_WINDOWS
+		// find VS version
+		const String	vs_devenv{ RDE_VS_DEVENV_EXE };
+		String			vs_ver;
+
+		if ( vs_devenv.find( "/2019/" ) != String::npos )
+			vs_ver = "\"Visual Studio 16 2019\"";
+		else
+		if ( vs_devenv.find( "/2017/" ) != String::npos )
+			vs_ver = "\"Visual Studio 15 2017 Win64\"";
+		else
+		{
+			FG_LOGI( "Can't find Visual Studio compiler, cancel building" );
+			return false;
+		}
+
+		FS::path	build_folder = FS::path{_folder}.append("build");
+
+		FS::create_directories( build_folder );
+
+		FG_LOGI( "Build source..." );
+
+		CHECK_ERR( Execute( "cd \""s << build_folder.string() << "\" && cmake -G " << vs_ver << " .. && cmake --build . --config Debug", 60*60'000 ));
+
+		const FS::path	exe_path = FS::path{_folder}.append("build").append("Debug").append("VkPlayer.exe");
+
+		if ( FS::exists( exe_path ))
+		{
+			FG_LOGI( "Successfully builded to '"s << exe_path.string() << "'" );
+		}
+		else
+		{
+			FG_LOGI( "Failed to build exported source." );
+		}
+
+		return true;
+#	else
+		return false;
+#	endif
+	}
+
 /*
 =================================================
 	ResetToInitial
@@ -635,7 +742,7 @@ namespace RDE
 */
 	void VulkanFnToCpp2::FlushGlobal ()
 	{
-		if ( _group and not _captureStarted )
+		if ( not _captureStarted )
 			_initSrc << before << result;
 		else
 			_frameSrc << before << result;
@@ -2683,9 +2790,9 @@ namespace RDE
 	constructor
 =================================================
 */
-	VulkanConverter::VulkanConverter (const FS::path &folder)
+	VulkanConverter::VulkanConverter (const FS::path &folder, const ConverterConfig &cfg)
 	{
-		_listener = MakeShared<VulkanFnToCpp2>( folder );
+		_listener = MakeShared<VulkanFnToCpp2>( folder, cfg );
 	}
 
 

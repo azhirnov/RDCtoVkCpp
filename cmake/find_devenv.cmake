@@ -11,4 +11,8 @@ if (WIN32)
 			break()
 		endif ()
 	endforeach ()
+	
+	if (RDE_VS_DEVENV_EXE)
+		message( STATUS "Found VS compiler in '${RDE_VS_DEVENV_EXE}'" )
+	endif ()
 endif ()

@@ -8,17 +8,24 @@
 using namespace RDE;
 
 static const char	s_Help[] = R"#(
--o [filename]
---open [filename]   - open RenderDoc capture
+-i [filename]           - open RenderDoc capture, must be *.zip or *.zip.xml file
+--input [filename]
 
--d [dir]
---output-dir [dir]  - save c++ code into output directory
+-o [dir]                - save c++ code into output directory
+--output [dir]
+
+--div-by-cmdbuf [bool]  - (optional) group api calls by command buffers, default = true
+
+--build                 - (optional) generate project and build, default = false
+
+--clean					- (optional) clean output folder before converting
 )#";
 
 int main (int argc, const char** argv)
 {
-	String	input;
-	String	output;
+	String			input;
+	String			output;
+	ConverterConfig	cfg;
 	
 	// parse arguments
 	for (int i = 1; i < argc; ++i)
@@ -26,11 +33,11 @@ int main (int argc, const char** argv)
 		StringView	curr = argv[i];
 
 		// 'open RDC' command
-		if ( curr == "-o" or curr == "--open" )
+		if ( curr == "-i" or curr == "--input" )
 		{
 			if ( i+1 >= argc )
 			{
-				std::cout << "'--open' requires file or folder name" << std::endl;
+				std::cout << "'--input' requires file or folder name" << std::endl;
 				return -1;
 			}
 
@@ -39,11 +46,11 @@ int main (int argc, const char** argv)
 		}
 
 		// 'set output directory' command
-		if ( curr == "-d" or curr == "--output-dir" )
+		if ( curr == "-o" or curr == "--output" )
 		{
 			if ( i+1 >= argc )
 			{
-				std::cout << "'--output-dir' requires folder name" << std::endl;
+				std::cout << "'--output' requires folder name" << std::endl;
 				return -1;
 			}
 
@@ -56,6 +63,31 @@ int main (int argc, const char** argv)
 		{
             std::cout << s_Help << std::endl;
 			return 0;
+		}
+
+		if ( curr == "--div-by-cmdbuf" )
+		{
+			if ( i+1 >= argc )
+			{
+				std::cout << "--div-by-cmdbuf requires bool parameter" << std::endl;
+				return -1;
+			}
+			
+			++i;
+			cfg.divideByCmdBuffers = (argv[i] == "true"s or argv[i] == "TRUE"s);
+			continue;
+		}
+
+		if ( curr == "--build" )
+		{
+			cfg.compile = true;
+			continue;
+		}
+
+		if ( curr == "--clean" )
+		{
+			cfg.cleanOutputFolder = true;
+			continue;
 		}
 
 		std::cout << "unknown command: '" << curr << "', see help with command -h or --help" << std::endl;
@@ -95,16 +127,22 @@ int main (int argc, const char** argv)
 	}
 	else
 	{
+		if ( not FS::create_directories( output_p ))
+		{
+			std::cout << "can't create directory: '" << output << "'" << std::endl;
+			return -1;
+		}
 
+		std::cout << "created directoty: '" << output << "'" << std::endl;
 	}
 
 
-	VulkanConverter	vk_conv{ output_p };
+	VulkanConverter	vk_conv{ output_p, cfg };
 	RdCaptureReader	reader;
 
 	reader.AddListener( vk_conv.GetListener() );
 
-	CHECK_ERR( reader.OpenCapture( input_p ), -1 );
+	CHECK_ERR( reader.OpenCapture( input_p.replace_extension("") ), -1 );
 	
 	return 0;
 }

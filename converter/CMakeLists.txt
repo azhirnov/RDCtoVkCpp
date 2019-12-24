@@ -13,9 +13,10 @@ target_include_directories( "RdConverter" PUBLIC ".." "." )
 target_link_libraries( "RdConverter" PUBLIC "STL" )
 target_link_libraries( "RdConverter" PUBLIC "SPIRV-Cross-lib" )
 target_link_libraries( "RdConverter" PUBLIC "MiniZ" )
-target_compile_definitions( "RdConverter" PUBLIC "RDE_APP_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}/../application\"" )
+
+target_compile_definitions( "RdConverter" PUBLIC "RDE_SOURCE_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}/..\"" )
 target_compile_definitions( "RdConverter" PUBLIC "RDE_FRAMEGRAPH_PATH=\"${RDE_FRAMEGRAPH_PATH}\"" )
-target_compile_definitions( "RdConverter" PUBLIC "RDE_FRAMEGRAPH_EXTERNAL_PATH=\"${RDE_FRAMEGRAPH_PATH}/extensions\"" )
+target_compile_definitions( "RdConverter" PUBLIC "RDE_VS_DEVENV_EXE=\"${RDE_VS_DEVENV_EXE}\"" )
 
 if (MSVC)
 	set_property( DIRECTORY PROPERTY VS_STARTUP_PROJECT "RdConverter" )

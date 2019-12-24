@@ -7,6 +7,13 @@
 
 namespace RDE
 {
+	struct ConverterConfig
+	{
+		bool	divideByCmdBuffers	= true;
+		bool	compile				= false;
+		bool	cleanOutputFolder	= false;
+	};
+
 
 	//
 	// Vulkan Converter
@@ -23,7 +30,7 @@ namespace RDE
 
 	// methods
 	public:
-		explicit VulkanConverter (const FS::path &folder);
+		explicit VulkanConverter (const FS::path &folder, const ConverterConfig &cfg);
 
 		void Flush ();
 
