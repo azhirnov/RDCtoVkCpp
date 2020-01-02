@@ -18,6 +18,8 @@ static const char	s_Help[] = R"#(
 
 --build                 - (optional) generate project and build, default = false
 
+--configure             - (optional) generate project without building, default = false
+
 --clean					- (optional) clean output folder before converting
 )#";
 
@@ -83,6 +85,12 @@ int main (int argc, const char** argv)
 			cfg.compile = true;
 			continue;
 		}
+		
+		if ( curr == "--configure" )
+		{
+			cfg.configure = true;
+			continue;
+		}
 
 		if ( curr == "--clean" )
 		{
@@ -134,6 +142,12 @@ int main (int argc, const char** argv)
 		}
 
 		std::cout << "created directoty: '" << output << "'" << std::endl;
+	}
+
+	if ( cfg.compile and cfg.configure )
+	{
+		std::cout << "'configure' command ignored because used 'build' command" << std::endl;
+		cfg.configure = false;
 	}
 
 

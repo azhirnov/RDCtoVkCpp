@@ -136,6 +136,7 @@ namespace RDE
 
 		String					_initSrc;
 		String					_initFrameSrc;
+		String					_initPipelines;
 
 		String					_globalSrcBefore;
 		String					_globalSrcAfter;
@@ -169,7 +170,9 @@ namespace RDE
 
 		bool					_group;
 		bool					_captureStarted	= false;
-		bool					_compileConvertedCode;
+		bool					_isPipeline		= false;
+		bool					_configureConvertedCode;
+		bool					_buildConverterCode;
 
 		Allocator_t				_allocator;
 		Allocator_t				_initialDSAllocator;
@@ -278,7 +281,8 @@ namespace RDE
 		_folder{ outputFolder },
 		_shaderFolder{ FS::path{outputFolder}.append("shaders") },
 		_group{ cfg.divideByCmdBuffers },
-		_compileConvertedCode{ cfg.compile }
+		_configureConvertedCode{ cfg.configure or cfg.compile },
+		_buildConverterCode{ cfg.compile }
 	{
 		if ( cfg.cleanOutputFolder )
 		{
@@ -355,9 +359,12 @@ namespace RDE
 		{
 			_initSrc =
 				"#include \"Resources.h\"\n\n"s +
-				"extern void Initialize (const VApp &app)\n{\n"s +
-					_initSrc + "\n\n" +
-					"\t// all upload and layout transition commands recorded here and will be executed in 'BeginFrame()' method\n" +
+				"extern void CreatePipelines (const VApp &app)\n{\n" +
+					_initPipelines + "\n}\n\n" +
+				"extern void Initialize (const VApp &app)\n{\n" +
+					_initSrc +
+					"\tCreatePipelines( app );\n" +
+					"\n\n\t// all upload and layout transition commands recorded here and will be executed in 'BeginFrame()' method\n" +
 					_initFrameSrc + "\n}\n";
 			
 			remapper.ReplaceNames( INOUT _initSrc );
@@ -409,9 +416,14 @@ namespace RDE
 				<< "\tInitialize( app );\n\n"
 				<< "\tfor (uint i = 0;; ++i)\n"
 				<< "\t{\n"
-				<< "\t	FG_LOGI( \"frame: \" + std::to_string(i) );\n"
-				<< "\t	if ( not app.BeginFrame() )\n"
-				<< "\t		break;\n"
+				<< "\t	FG_LOGI( \"frame: \" + std::to_string(i) );\n\n"
+				<< "\t	auto act = app.BeginFrame();\n\n"
+				<< "\t	if ( act == EAppAction::Quit )\n"
+				<< "\t		break;\n\n"
+				<< "\t	if ( act == EAppAction::Pause )\n"
+				<< "\t		continue;\n\n"
+				<< "\t	if ( act == EAppAction::RecreatePipelines )\n"
+				<< "\t		CreatePipelines( app );\n\n"
 				<< "\t	Frame( app );\n"
 				<< "\t	app.EndFrame( EQueueFamily(" << ToString(img_info.lastQueue) << ") );\n"	// TODO: remap queue family
 				<< "\t	ResetFrame( app );\n"
@@ -470,7 +482,7 @@ namespace RDE
 
 		_captureStarted = false;
 
-		if ( _compileConvertedCode )
+		if ( _configureConvertedCode )
 		{
 			_CompileSource();
 		}
@@ -545,18 +557,33 @@ namespace RDE
 
 		FG_LOGI( "Build source..." );
 
-		CHECK_ERR( Execute( "cd \""s << build_folder.string() << "\" && cmake -G " << vs_ver << " .. && cmake --build . --config Debug", 60*60'000 ));
+		String		build_cfg	= "Debug";
+		String		command		= ("cd \""s << build_folder.string() << "\" && cmake -G " << vs_ver << " ..");
 
-		const FS::path	exe_path = FS::path{_folder}.append("build").append("Debug").append("VkPlayer.exe");
+		if ( _buildConverterCode )
+			command << "&& cmake --build . --config " << build_cfg;
 
-		if ( FS::exists( exe_path ))
+		CHECK_ERR( Execute( command, 60*60'000 ));
+
+		const FS::path	exe_path = FS::path{_folder}.append("build").append( build_cfg ).append("VkPlayer.exe");
+		const FS::path	sln_path = FS::path{_folder}.append("build").append("Project.sln");
+
+		if ( not FS::exists( sln_path ))
 		{
-			FG_LOGI( "Successfully builded to '"s << exe_path.string() << "'" );
+			FG_LOGI( "Failed to configure exported source." );
+			return false;
 		}
-		else
+
+		if ( _buildConverterCode and not FS::exists( exe_path ))
 		{
 			FG_LOGI( "Failed to build exported source." );
+			return false;
 		}
+
+		if ( _buildConverterCode )
+			FG_LOGI( "Successfully builded to '"s << exe_path.string() << "'" )
+		else
+			FG_LOGI( "Successfully configured" );
 
 		return true;
 #	else
@@ -742,6 +769,9 @@ namespace RDE
 */
 	void VulkanFnToCpp2::FlushGlobal ()
 	{
+		if ( _isPipeline )
+			_initPipelines << before << result;
+		else
 		if ( not _captureStarted )
 			_initSrc << before << result;
 		else
@@ -1042,6 +1072,7 @@ namespace RDE
 		_globalSrcBefore
 			<< "#include \"Resources.h\"\n\n"
 			<< "extern void Initialize (const VApp &app);\n"
+			<< "extern void CreatePipelines (const VApp &app);\n"
 			<< "extern void Frame (const VApp &app);\n"
 			<< "extern void ResetFrame (const VApp &app);\n";
 
@@ -1583,6 +1614,8 @@ namespace RDE
 	void VulkanFnToCpp2::CreateShaderModule (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkShaderModuleCreateInfo * pCreateInfo,
 											 const VkAllocationCallbacks *pAllocator, VkShaderModule * pShaderModule)
 	{
+		_isPipeline = true;
+
 		CHECK( remapper.CreateResource( VK_OBJECT_TYPE_SHADER_MODULE, VkResourceID(*pShaderModule), chunkIndex ));
 
 		const String			shader_name = ToString( remapper.GetResourceUID( VK_OBJECT_TYPE_SHADER_MODULE, VkResourceID(*pShaderModule), chunkIndex )) << ".glsl";
@@ -1654,6 +1687,8 @@ namespace RDE
 			<< ", \"" << remapper.GetResourceName( VK_OBJECT_TYPE_SHADER_MODULE, VkResourceID(*pShaderModule) )
 			<< "\" );\n";
 		FlushGlobal();
+
+		_isPipeline = false;
 	}
 	
 /*
@@ -2359,6 +2394,7 @@ namespace RDE
 */
 	void VulkanFnToCpp2::CreatePipelineCache (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, const VkPipelineCacheCreateInfo * pCreateInfo, const VkAllocationCallbacks * pAllocator, VkPipelineCache * pPipelineCache)
 	{
+		// skip
 	}
 	
 /*
@@ -2368,7 +2404,7 @@ namespace RDE
 */
 	void VulkanFnToCpp2::CreateGraphicsPipelines (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkPipelineCache, uint32_t createInfoCount, const VkGraphicsPipelineCreateInfo * pCreateInfos, const VkAllocationCallbacks * pAllocator, VkPipeline * pPipelines)
 	{
-
+		_isPipeline = true;
 		VulkanFnToCpp::CreateGraphicsPipelines( chunkIndex, threadID, timestamp, device, VK_NULL_HANDLE, createInfoCount, pCreateInfos, pAllocator, pPipelines );
 		
 		result << "\tapp.SetObjectName( "
@@ -2376,6 +2412,8 @@ namespace RDE
 			<< ", \"" << remapper.GetResourceName( VK_OBJECT_TYPE_PIPELINE, VkResourceID(*pPipelines) )
 			<< "\" );\n";
 		FlushGlobal();
+		
+		_isPipeline = false;
 	}
 	
 /*
@@ -2385,6 +2423,7 @@ namespace RDE
 */
 	void VulkanFnToCpp2::CreateComputePipelines (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkPipelineCache, uint32_t createInfoCount, const VkComputePipelineCreateInfo * pCreateInfos, const VkAllocationCallbacks * pAllocator, VkPipeline * pPipelines)
 	{
+		_isPipeline = true;
 		VulkanFnToCpp::CreateComputePipelines( chunkIndex, threadID, timestamp, device, VK_NULL_HANDLE, createInfoCount, pCreateInfos, pAllocator, pPipelines );
 		
 		result << "\tapp.SetObjectName( "
@@ -2392,6 +2431,8 @@ namespace RDE
 			<< ", \"" << remapper.GetResourceName( VK_OBJECT_TYPE_PIPELINE, VkResourceID(*pPipelines) )
 			<< "\" );\n";
 		FlushGlobal();
+
+		_isPipeline = false;
 	}
 	
 /*

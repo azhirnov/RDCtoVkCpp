@@ -98,6 +98,15 @@ struct FIValue
 };
 
 
+enum class EAppAction
+{
+	None,
+	Quit,
+	Pause,
+	RecreatePipelines,
+};
+
+
 #include <filesystem>
 namespace FS = std::filesystem;
 
@@ -175,6 +184,10 @@ private:
 	String					_windowTitle;
 	uint2					_surfaceSize;
 
+	// actions
+	bool					_requireRebuildPipelines	= false;
+	bool					_pauseRendering				= false;
+
 	// virtual swapchain
 	VkSemaphore				_imageAvailableSem		= VK_NULL_HANDLE;
 	mutable VkImage			_swapchainImage			= VK_NULL_HANDLE;
@@ -223,7 +236,7 @@ public:
 						  const VkSurfaceTransformFlagBitsKHR	preTransform		= VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
 						  const VkPresentModeKHR				presentMode			= VK_PRESENT_MODE_FIFO_KHR,
 						  const VkCompositeAlphaFlagBitsKHR		compositeAlpha		= VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-						  const VkImageUsageFlags				colorImageUsage		= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
+						  const VkImageUsageFlags				colorImageUsage		= VK_IMAGE_USAGE_TRANSFER_DST_BIT);
 	
 	void Destroy ();
 
@@ -231,7 +244,8 @@ public:
 	void AllocateResources (const ResIdType count);
 
 	bool CreateSwapchainImage (ImageID image, uint2 dim, VkFormat format, VkImageUsageFlags usage) const;
-	bool BeginFrame ();
+
+	ND_ EAppAction BeginFrame ();
 	bool EndFrame (EQueueFamily presentQueue);
 
 	bool MapQueueID (uint uid, QueueID id) const;
@@ -270,12 +284,13 @@ private:
 	ND_ VkDevice & 					EditResource (DeviceID id)					{ return _EditResource( id ); }
 	ND_ VkQueue & 					EditResource (QueueID id)					{ return _EditResource( id ); }
 	
+// IWindowEventListener
 private:
 	void OnResize (const uint2 &size) override;
 	void OnRefresh () override {}
 	void OnDestroy () override {}
 	void OnUpdate () override {}
-	void OnKey (StringView, EKeyAction) override {}
+	void OnKey (StringView, EKeyAction) override;
 	void OnMouseMove (const float2 &) override {}
 
 private:
@@ -288,6 +303,7 @@ private:
 	ND_ PerQueue& _InitQueue (EQueueFamily family) const;
 
 	void _DestroyResources ();
+	void _DestroyPipelines ();
 };
 
 

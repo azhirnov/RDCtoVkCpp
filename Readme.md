@@ -5,11 +5,15 @@ Work in progress.
 
 
 ## How to use
-Run RdConverter.exe with ```-i path/to/exported/rdc.zip -o folder/name/for/cpp/code```<br/>
-Other arguments:
+1. Export RenderDoc capture to XML + ZIP.
+2. Build RDCtoVkCpp or use prebuild binaries.
+3. Run console application `RdConverter.exe` with ```-i path/to/exported/rdc.zip -o folder/name/for/cpp/code```
+
+Other command line arguments:
 ```
 -h, --help              - show help
 --build                 - build project
+--configure             - generate project
 --clean                 - clean output folder before converting
 --div-by-cmdbuf [bool]  - group api calls by command buffers, default = true
 -i, --input [filename]  - open RenderDoc capture, must be *.zip or *.zip.xml file
@@ -35,11 +39,14 @@ You should rebuild and run converter again on new environment or fix pathes to f
 * [ ] Dota 2 - crash
 * [ ] Rage 2 - crash
 * [ ] RDR 2
+* [ ] 3DMark api overhead test
+* [ ] No Man's Sky
 
 
 ## TODO
 * Immutable samplers
 * Measure frame time
+* Reload shaders
 * Portability (remap queue family and memory types)
 * Upload multisampled image
 * Sparse memory

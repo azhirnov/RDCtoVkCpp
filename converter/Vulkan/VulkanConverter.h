@@ -11,6 +11,7 @@ namespace RDE
 	{
 		bool	divideByCmdBuffers	= true;
 		bool	compile				= false;
+		bool	configure			= false;
 		bool	cleanOutputFolder	= false;
 	};
 

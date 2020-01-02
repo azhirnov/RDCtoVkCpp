@@ -82,6 +82,26 @@ void VApp::OnResize (const uint2 &size)
 
 /*
 =================================================
+	OnKey
+=================================================
+*/
+void VApp::OnKey (StringView key, EKeyAction act)
+{
+	if ( act == EKeyAction::Down )
+	{
+		if ( key == "escape" and _window )
+			_window->Quit();
+
+		if ( key == "space" )
+			_pauseRendering = not _pauseRendering;
+
+		if ( key == "R" )
+			_requireRebuildPipelines = true;
+	}
+}
+
+/*
+=================================================
 	CreateWindow
 =================================================
 */
@@ -826,18 +846,24 @@ bool  VApp::CreateSwapchainImage (ImageID image, uint2 dim, VkFormat format, VkI
 	BeginFrame
 =================================================
 */
-bool  VApp::BeginFrame ()
+EAppAction  VApp::BeginFrame ()
 {
 	if ( not _window )
-		return false;
+		return EAppAction::Quit;
 
 	if ( not _window->Update() )
-		return false;
+		return EAppAction::Quit;
+
+	if ( _pauseRendering )
+	{
+		std::this_thread::sleep_for( std::chrono::milliseconds{16} );
+		return EAppAction::Pause;
+	}
 
 	for (auto&[family, q] : _queueCmd)
 	{
 		if ( q.started ) {
-			VK_CHECK( vkEndCommandBuffer( q.cmdBuffer ));
+			VK_CHECK( vkEndCommandBuffer( q.cmdBuffer ), EAppAction::None );
 			q.started = false;
 		}
 
@@ -846,13 +872,22 @@ bool  VApp::BeginFrame ()
 		submit_info.commandBufferCount	= 1;
 		submit_info.pCommandBuffers		= &q.cmdBuffer;
 
-		VK_CHECK( vkQueueSubmit( q.queue, 1, &submit_info, VK_NULL_HANDLE ));
+		VK_CHECK( vkQueueSubmit( q.queue, 1, &submit_info, VK_NULL_HANDLE ), EAppAction::None );
 	}
 
-	VK_CHECK( vkDeviceWaitIdle( _vulkan.GetVkDevice() ));
+	VK_CHECK( vkDeviceWaitIdle( _vulkan.GetVkDevice() ), EAppAction::None );
+
+	EAppAction	result = EAppAction::None;
+
+	if ( _requireRebuildPipelines )
+	{
+		_requireRebuildPipelines = false;
+		result					 = EAppAction::RecreatePipelines;
+		_DestroyPipelines();
+	}
 
 	// TODO: start timer
-	return true;
+	return result;
 }
 
 /*
@@ -1039,6 +1074,32 @@ void  VApp::Destroy ()
 	if ( _window ) {
 		_window->Destroy();
 		_window.reset();
+	}
+}
+
+/*
+=================================================
+	_DestroyPipelines
+=================================================
+*/
+void VApp::_DestroyPipelines ()
+{
+	// shader modules
+	{
+		auto&	storage = _resources[ _ObjInfo<ShaderModuleID>::index ];
+
+		for (auto smod : storage) {
+			vkDestroyShaderModule( _vulkan.GetVkDevice(), VkShaderModule(smod), null );
+		}
+	}
+
+	// pipelines
+	{
+		auto&	storage = _resources[ _ObjInfo<PipelineID>::index ];
+
+		for (auto ppln : storage) {
+			vkDestroyPipeline( _vulkan.GetVkDevice(), VkPipeline(ppln), null );
+		}
 	}
 }
 
