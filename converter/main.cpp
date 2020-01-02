@@ -11,8 +11,8 @@ static const char	s_Help[] = R"#(
 -i [filename]           - open RenderDoc capture, must be *.zip or *.zip.xml file
 --input [filename]
 
--o [dir]                - save c++ code into output directory
---output [dir]
+-o [folder]             - save c++ code into output directory
+--output [folder]
 
 --div-by-cmdbuf [bool]  - (optional) group api calls by command buffers, default = true
 

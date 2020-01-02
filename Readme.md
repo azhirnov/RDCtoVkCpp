@@ -1,16 +1,19 @@
 [![Build Status](https://img.shields.io/travis/azhirnov/RDCtoVkCpp/master.svg?logo=travis)](https://travis-ci.com/azhirnov/RDCtoVkCpp)
 
-Converts RenderDoc Vulkan capture to compilable and executable C++ code.
+Converts RenderDoc Vulkan capture to compilable and executable C++ code.<br/>
 Work in progress.
 
 
 ## How to use
-Run RdConverter.exe with ```-i path/to/exported/rdc.zip -o folder/name/for/cpp/code```
-Optional arguments:
+Run RdConverter.exe with ```-i path/to/exported/rdc.zip -o folder/name/for/cpp/code```<br/>
+Other arguments:
 ```
--h, --help  - show help
---build     - build project
---clean     - clean output folder before converting
+-h, --help              - show help
+--build                 - build project
+--clean                 - clean output folder before converting
+--div-by-cmdbuf [bool]  - group api calls by command buffers, default = true
+-i, --input [filename]  - open RenderDoc capture, must be *.zip or *.zip.xml file
+-o, --output [folder]   - save c++ code into output directory
 ```
 Warning: console application and converted sources from capture is not portable!
 You should rebuild and run converter again on new environment or fix pathes to files.
@@ -49,7 +52,7 @@ You should rebuild and run converter again on new environment or fix pathes to f
 ## Building
 Requires C++17 and CMake 3.10+
 
-Dependencies:
+Dependencies:<br/>
 [FrameGraph](https://github.com/azhirnov/FrameGraph) - only stl and vulkan helpers.<br/>
 [VulkanMemoryAllocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) - required.<br/>
 [glfw](https://github.com/glfw/glfw) or [SDL2](https://www.libsdl.org) - required.<br/>
