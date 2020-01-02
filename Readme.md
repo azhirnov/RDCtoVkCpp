@@ -46,13 +46,10 @@ You should rebuild and run converter again on new environment or fix pathes to f
 ## TODO
 * Immutable samplers
 * Measure frame time
-* Reload shaders
 * Portability (remap queue family and memory types)
 * Upload multisampled image
 * Sparse memory
 * 2nd plane formats
-* Load content in multiple threads to speedup loading.
-* Reload shaders.
 * Fix validation errors.
 
 

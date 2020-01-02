@@ -16,10 +16,25 @@
 #	include "miniz_zip.h"
 #endif
 
-#define VMA_RECORDING_ENABLED		0
-#define VMA_DEDICATED_ALLOCATION	0
-#define VMA_IMPLEMENTATION			1
-#define VMA_ASSERT(expr)			{}
+
+#define VMA_USE_STL_CONTAINERS				1
+#define VMA_STATIC_VULKAN_FUNCTIONS			0
+#define VMA_RECORDING_ENABLED				0
+#define VMA_DEDICATED_ALLOCATION			0
+#define VMA_IMPLEMENTATION					1
+#define VMA_ASSERT(expr)					{}
+
+#ifdef FG_DEBUG
+# define VMA_DEBUG_GLOBAL_MUTEX				1
+# define VMA_DEBUG_INITIALIZE_ALLOCATIONS	0
+# define VMA_DEBUG_ALWAYS_DEDICATED_MEMORY	0
+# define VMA_DEBUG_DETECT_CORRUPTION		0
+#else
+# define VMA_DEBUG_GLOBAL_MUTEX				0
+# define VMA_DEBUG_INITIALIZE_ALLOCATIONS	0
+# define VMA_DEBUG_ALWAYS_DEDICATED_MEMORY	0
+# define VMA_DEBUG_DETECT_CORRUPTION		0
+#endif
 
 #ifdef COMPILER_MSVC
 #	pragma warning (push, 0)
@@ -527,129 +542,216 @@ bool  VApp::_LoadContent () const
 {
 	if ( _contentLoaded )
 		return true;
-
-	mz_zip_archive	archive = {};
-
-	mz_bool status = mz_zip_reader_init_file( OUT &archive, _contentFolder.string().c_str(), 0);
-	CHECK_ERR( status );
 	
 	CHECK_ERR( _CreateAllocator() );
 
-	const size_t	total	= _bufferContent.size() + _imageContent.size() + _hostMemContent.size();
-	size_t			counter	= 0;
+	using TaskQueue_t = Array< std::function< bool (std::atomic<size_t> &counter, size_t total, void* arch) >>;
+	
+	const size_t		total			= _bufferContent.size() + _imageContent.size() + _hostMemContent.size();
+	TaskQueue_t			task_queue;		task_queue.reserve( total );
+	std::atomic<size_t>	counter			{0};
+	std::atomic<size_t>	read_pos		{0};
+	const uint			thread_count	= Max( 2u, std::thread::hardware_concurrency() ) - 1;
+	Array<std::thread>	threads;		threads.reserve( thread_count );
 
-	for (auto&[name, buf] : _bufferContent)
+
+	// add content loading tasks
 	{
-		uint	index = UMax;
-		CHECK_ERR( mz_zip_reader_locate_file_v2( &archive, name.c_str(), "", 0, OUT &index ) == MZ_TRUE );
-
-		mz_zip_archive_file_stat	stat;
-		CHECK_ERR( mz_zip_reader_file_stat( &archive, index, OUT &stat ) == MZ_TRUE );
-		
-		// create staging buffer
-		{
-			VkBufferCreateInfo	info = {};
-			info.sType			= VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-			info.flags			= 0;
-			info.size			= VkDeviceSize(buf.size);
-			info.usage			= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-			info.sharingMode	= VK_SHARING_MODE_EXCLUSIVE;
-
-			VK_CHECK( vkCreateBuffer( _vulkan.GetVkDevice(), &info, null, OUT &buf.staging ));
+		for (auto&[name, buf] : _bufferContent) {
+			task_queue.push_back(
+				[this, &name, &buf] (std::atomic<size_t> &counter, size_t total, void* arch) {
+					bool res = _LoadBuffer( arch, name, INOUT buf );
+					auto cnt = counter.fetch_add( 1 );
+					FG_LOGI( "Loaded buffer: '"s << StringView{name} << "', " << ToString(cnt) << " of " << ToString(total) );
+					return res;
+				});
 		}
-
-		// alloc memory
-		{
-			VmaAllocationCreateInfo		info = {};
-			info.flags			= VMA_ALLOCATION_CREATE_MAPPED_BIT;
-			info.usage			= VMA_MEMORY_USAGE_CPU_TO_GPU;
-			info.requiredFlags	= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-			info.preferredFlags	= 0;
-			info.memoryTypeBits	= 0;
-			info.pool			= VK_NULL_HANDLE;
-			info.pUserData		= null;
-
-			VK_CHECK( vmaAllocateMemoryForBuffer( _memAllocator, buf.staging, &info, OUT &buf.alloc, null ));
-			VK_CHECK( vmaBindBufferMemory( _memAllocator, buf.alloc, buf.staging ));
+		for (auto&[name, img] : _imageContent) {
+			task_queue.push_back(
+				[this, &name, &img] (std::atomic<size_t> &counter, size_t total, void* arch) {
+					bool res = _LoadImage( arch, name, INOUT img );
+					auto cnt = counter.fetch_add( 1 );
+					FG_LOGI( "Loaded image: '"s << StringView{name} << "', " << ToString(cnt) << " of " << ToString(total) );
+					return res;
+				});
 		}
+		for (auto&[name, mem] : _hostMemContent) {
+			task_queue.push_back(
+				[this, &name, &mem] (std::atomic<size_t> &counter, size_t total, void* arch) {
+					bool res = _LoadMemory( arch, name, INOUT mem );
+					auto cnt = counter.fetch_add( 1 );
+					FG_LOGI( "Loaded host memory: '"s << StringView{name} << "', " << ToString(cnt) << " of " << ToString(total) );
+					return res;
+				});
+		}
+		CHECK_ERR( task_queue.size() == total );
+	}
+	
 
-		VmaAllocationInfo	alloc_info	= {};
-		vmaGetAllocationInfo( _memAllocator, buf.alloc, OUT &alloc_info );
+	// create threads
+	const String	content_archive = _contentFolder.string();
 
-		CHECK_ERR( alloc_info.pMappedData );
-		CHECK_ERR( buf.size == stat.m_uncomp_size );
-		CHECK_ERR( alloc_info.size >= stat.m_uncomp_size );
-		CHECK_ERR( mz_zip_reader_extract_to_mem( &archive, index, alloc_info.pMappedData, Min( alloc_info.size, stat.m_uncomp_size ), 0 ) == MZ_TRUE );
+	for (uint i = 0; i < thread_count; ++i)
+	{
+		threads.emplace_back(
+			[&task_queue, total, &read_pos, &counter, &content_archive] ()
+			{
+				mz_zip_archive	archive = {};
+				if ( not mz_zip_reader_init_file( OUT &archive, content_archive.c_str(), 0 ))
+					return;
 
-		FG_LOGI( "Loaded buffer: '"s << StringView{name} << "', " << ToString(counter) << " of " << ToString(total) );
-		++counter;
+				for (;;) {
+					size_t	idx = read_pos.fetch_add( 1 );
+
+					if ( idx >= task_queue.size() )
+						break;
+
+					task_queue[idx]( counter, total, &archive );
+				}
+				mz_zip_reader_end( &archive );
+			});
 	}
 
-	for (auto&[name, img] : _imageContent)
+
+	// wait for threads
 	{
-		uint	index = UMax;
-		CHECK_ERR( mz_zip_reader_locate_file_v2( &archive, name.c_str(), "", 0, OUT &index ) == MZ_TRUE );
-
-		mz_zip_archive_file_stat	stat;
-		CHECK_ERR( mz_zip_reader_file_stat( &archive, index, OUT &stat ) == MZ_TRUE );
-		
-		// create staging buffer
-		{
-			VkBufferCreateInfo	info = {};
-			info.sType			= VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-			info.flags			= 0;
-			info.size			= VkDeviceSize(img.size);
-			info.usage			= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-			info.sharingMode	= VK_SHARING_MODE_EXCLUSIVE;
-
-			VK_CHECK( vkCreateBuffer( _vulkan.GetVkDevice(), &info, null, OUT &img.staging ));
+		for (auto& t : threads) {
+			t.join();
 		}
 
-		// alloc memory
-		{
-			VmaAllocationCreateInfo		info = {};
-			info.flags			= VMA_ALLOCATION_CREATE_MAPPED_BIT;
-			info.usage			= VMA_MEMORY_USAGE_CPU_TO_GPU;
-			info.requiredFlags	= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-			info.preferredFlags	= 0;
-			info.memoryTypeBits	= 0;
-			info.pool			= VK_NULL_HANDLE;
-			info.pUserData		= null;
-
-			VK_CHECK( vmaAllocateMemoryForBuffer( _memAllocator, img.staging, &info, OUT &img.alloc, null ));
-			VK_CHECK( vmaBindBufferMemory( _memAllocator, img.alloc, img.staging ));
-		}
-
-		VmaAllocationInfo	alloc_info	= {};
-		vmaGetAllocationInfo( _memAllocator, img.alloc, OUT &alloc_info );
-
-		CHECK_ERR( alloc_info.pMappedData );
-		CHECK_ERR( img.size == stat.m_uncomp_size );
-		CHECK_ERR( alloc_info.size >= stat.m_uncomp_size );
-		CHECK_ERR( mz_zip_reader_extract_to_mem( &archive, index, alloc_info.pMappedData, Min( alloc_info.size, stat.m_uncomp_size ), 0 ) == MZ_TRUE );
-
-		FG_LOGI( "Loaded image: '"s << StringView{name} << "', " << ToString(counter) << " of " << ToString(total) );
-		++counter;
+		threads.clear();
+		task_queue.clear();
+		CHECK_ERR( read_pos.load() >= task_queue.size() );
 	}
-
-	for (auto&[name, mem] : _hostMemContent)
-	{
-		uint	index = UMax;
-		CHECK_ERR( mz_zip_reader_locate_file_v2( &archive, name.c_str(), "", 0, OUT &index ) == MZ_TRUE );
-
-		mz_zip_archive_file_stat	stat;
-		CHECK_ERR( mz_zip_reader_file_stat( &archive, index, OUT &stat ) == MZ_TRUE );
-		
-		CHECK_ERR( mem.size() == stat.m_uncomp_size );
-		CHECK_ERR( mz_zip_reader_extract_to_mem( &archive, index, mem.data(), mem.size(), 0 ) == MZ_TRUE );
-
-		FG_LOGI( "Loaded host memory: '"s << StringView{name} << "', " << ToString(counter) << " of " << ToString(total) );
-		++counter;
-	}
-
-    mz_zip_reader_end( &archive );
 
 	_contentLoaded = true;
+	return true;
+}
+
+/*
+=================================================
+	_LoadBuffer
+=================================================
+*/
+bool  VApp::_LoadBuffer (void *archivePtr, const ContentName_t &name, BufferContent &buf) const
+{
+	auto*	archive = Cast<mz_zip_archive>( archivePtr );
+
+	uint	index = UMax;
+	CHECK_ERR( mz_zip_reader_locate_file_v2( archive, name.c_str(), "", 0, OUT &index ) == MZ_TRUE );
+
+	mz_zip_archive_file_stat	stat;
+	CHECK_ERR( mz_zip_reader_file_stat( archive, index, OUT &stat ) == MZ_TRUE );
+		
+	// create staging buffer
+	{
+		VkBufferCreateInfo	info = {};
+		info.sType			= VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		info.flags			= 0;
+		info.size			= VkDeviceSize(buf.size);
+		info.usage			= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+		info.sharingMode	= VK_SHARING_MODE_EXCLUSIVE;
+
+		VK_CHECK( vkCreateBuffer( _vulkan.GetVkDevice(), &info, null, OUT &buf.staging ));
+	}
+
+	// alloc memory
+	{
+		VmaAllocationCreateInfo		info = {};
+		info.flags			= VMA_ALLOCATION_CREATE_MAPPED_BIT;
+		info.usage			= VMA_MEMORY_USAGE_CPU_TO_GPU;
+		info.requiredFlags	= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+		info.preferredFlags	= 0;
+		info.memoryTypeBits	= 0;
+		info.pool			= VK_NULL_HANDLE;
+		info.pUserData		= null;
+
+		VK_CHECK( vmaAllocateMemoryForBuffer( _memAllocator, buf.staging, &info, OUT &buf.alloc, null ));
+		VK_CHECK( vmaBindBufferMemory( _memAllocator, buf.alloc, buf.staging ));
+	}
+
+	VmaAllocationInfo	alloc_info	= {};
+	vmaGetAllocationInfo( _memAllocator, buf.alloc, OUT &alloc_info );
+
+	CHECK_ERR( alloc_info.pMappedData );
+	CHECK_ERR( buf.size == stat.m_uncomp_size );
+	CHECK_ERR( alloc_info.size >= stat.m_uncomp_size );
+	CHECK_ERR( mz_zip_reader_extract_to_mem( archive, index, alloc_info.pMappedData, stat.m_uncomp_size, 0 ) == MZ_TRUE );
+
+	return true;
+}
+
+/*
+=================================================
+	_LoadImage
+=================================================
+*/
+bool  VApp::_LoadImage (void *archivePtr, const ContentName_t &name, ImageContent &img) const
+{
+	auto*	archive = Cast<mz_zip_archive>( archivePtr );
+
+	uint	index = UMax;
+	CHECK_ERR( mz_zip_reader_locate_file_v2( archive, name.c_str(), "", 0, OUT &index ) == MZ_TRUE );
+
+	mz_zip_archive_file_stat	stat;
+	CHECK_ERR( mz_zip_reader_file_stat( archive, index, OUT &stat ) == MZ_TRUE );
+		
+	// create staging buffer
+	{
+		VkBufferCreateInfo	info = {};
+		info.sType			= VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		info.flags			= 0;
+		info.size			= VkDeviceSize(img.size);
+		info.usage			= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+		info.sharingMode	= VK_SHARING_MODE_EXCLUSIVE;
+
+		VK_CHECK( vkCreateBuffer( _vulkan.GetVkDevice(), &info, null, OUT &img.staging ));
+	}
+
+	// alloc memory
+	{
+		VmaAllocationCreateInfo		info = {};
+		info.flags			= VMA_ALLOCATION_CREATE_MAPPED_BIT;
+		info.usage			= VMA_MEMORY_USAGE_CPU_TO_GPU;
+		info.requiredFlags	= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+		info.preferredFlags	= 0;
+		info.memoryTypeBits	= 0;
+		info.pool			= VK_NULL_HANDLE;
+		info.pUserData		= null;
+
+		VK_CHECK( vmaAllocateMemoryForBuffer( _memAllocator, img.staging, &info, OUT &img.alloc, null ));
+		VK_CHECK( vmaBindBufferMemory( _memAllocator, img.alloc, img.staging ));
+	}
+
+	VmaAllocationInfo	alloc_info	= {};
+	vmaGetAllocationInfo( _memAllocator, img.alloc, OUT &alloc_info );
+
+	CHECK_ERR( alloc_info.pMappedData );
+	CHECK_ERR( img.size == stat.m_uncomp_size );
+	CHECK_ERR( alloc_info.size >= stat.m_uncomp_size );
+	CHECK_ERR( mz_zip_reader_extract_to_mem( archive, index, alloc_info.pMappedData, stat.m_uncomp_size, 0 ) == MZ_TRUE );
+
+	return true;
+}
+
+/*
+=================================================
+	_LoadMemory
+=================================================
+*/
+bool  VApp::_LoadMemory (void *archivePtr, const ContentName_t &name, Array<uint8_t> &mem) const
+{
+	auto*	archive = Cast<mz_zip_archive>( archivePtr );
+
+	uint	index = UMax;
+	CHECK_ERR( mz_zip_reader_locate_file_v2( archive, name.c_str(), "", 0, OUT &index ) == MZ_TRUE );
+
+	mz_zip_archive_file_stat	stat;
+	CHECK_ERR( mz_zip_reader_file_stat( archive, index, OUT &stat ) == MZ_TRUE );
+		
+	CHECK_ERR( mem.size() == stat.m_uncomp_size );
+	CHECK_ERR( mz_zip_reader_extract_to_mem( archive, index, mem.data(), mem.size(), 0 ) == MZ_TRUE );
+
 	return true;
 }
 

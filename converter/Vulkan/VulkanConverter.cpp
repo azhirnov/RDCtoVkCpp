@@ -428,9 +428,9 @@ namespace RDE
 				<< "\t	app.EndFrame( EQueueFamily(" << ToString(img_info.lastQueue) << ") );\n"	// TODO: remap queue family
 				<< "\t	ResetFrame( app );\n"
 				<< "\t}\n\n"
+				<< "\tapp.Destroy();\n"
 				<< "\tFG_LOGI( \"finished, press any key to exit...\" );\n"
 				<< "\tstd::cin.ignore();\n"
-				<< "\tapp.Destroy();\n"
 				<< "}\n";
 			
 			remapper.ReplaceNames( INOUT _globalSrcAfter );

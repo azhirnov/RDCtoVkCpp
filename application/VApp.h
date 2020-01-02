@@ -294,6 +294,10 @@ private:
 	void OnMouseMove (const float2 &) override {}
 
 private:
+	bool _LoadBuffer (void *archive, const ContentName_t &name, BufferContent &content) const;
+	bool _LoadImage (void *archive, const ContentName_t &name, ImageContent &content) const;
+	bool _LoadMemory (void *archive, const ContentName_t &name, Array<uint8_t> &content) const;
+
 	bool _LoadContent () const;
 	bool _CreateAllocator () const;
 	
