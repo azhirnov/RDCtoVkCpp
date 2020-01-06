@@ -59,7 +59,8 @@ int main ()
 
 	CHECK_ERR( app.CreateSwapchainImage( ImageID(0), uint2(1024, 768), VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_TRANSFER_DST_BIT ));
 
-	CHECK_ERR( app.BeginFrame() );
+	auto act = app.BeginFrame();
+	CHECK_ERR( act == EAppAction::None );
 
 	// build command buffer
 	{

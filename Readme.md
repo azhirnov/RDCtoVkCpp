@@ -35,10 +35,10 @@ You should rebuild and run converter again on new environment or fix pathes to f
 ## Tested on
 * [x] Doom (2016)
 * [ ] Wolfenstein 2 - incorrect rendering
-* [x] X4
-* [ ] Dota 2 - crash
-* [ ] Rage 2 - crash
-* [ ] RDR 2
+* [ ] X4 - incorrect rendering
+* [x] Dota 2
+* [ ] Rage 2 - incorrect rendering
+* [ ] RDR 2 - incorrect rendering
 * [ ] 3DMark api overhead test
 * [ ] No Man's Sky
 

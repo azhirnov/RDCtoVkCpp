@@ -174,6 +174,7 @@ private:
 
 	using ResourceMap_t		= StaticArray< Array<VkResourceID_t>, 32 >;
 	using MappedMemory_t	= Array< void* >;
+	using ShaderEntry_t		= Array< const char *>;
 
 
 // variables
@@ -199,6 +200,7 @@ private:
 	QueueUIDMap_t			_queueMap;
 	mutable ResourceMap_t	_resources;
 	mutable MappedMemory_t	_mappedMemory;
+	mutable ShaderEntry_t	_shaderEntries;
 
 	FS::path				_shaderFolder;
 	AppDetail::SpvCompiler	_spvCompiler;
@@ -262,7 +264,8 @@ public:
 	ND_ typename _ObjInfo<ResIdType>::vktype & 		EditResource (ResIdType id)	const	{ return _EditResource( id ); }
 
 	void SetShaderFolder (StringView folder);
-	bool CreateShaderModule (StringView name, VkShaderStageFlagBits stage, OUT VkShaderModule &module) const;
+	bool CreateShaderModule (StringView name, VkShaderStageFlagBits stage, const char* originEntry, ShaderModuleID id) const;
+	ND_ const char*  GetShaderEntry (ShaderModuleID id) const;
 
 	void SetContentFolder (StringView folder);
 	bool LoadImage (StringView contentName, uint3 dim, uint arrayLayers, VkSampleCountFlagBits samples,
@@ -369,6 +372,10 @@ inline void  VApp::AllocateResources (const ResIdType count)
 	if constexpr( IsSameTypes< ResIdType, DeviceMemoryID >)
 	{
 		_mappedMemory.resize( size_t(count) );
+	}
+	if constexpr( IsSameTypes< ResIdType, ShaderModuleID >)
+	{
+		_shaderEntries.resize( size_t(count) );
 	}
 }
 

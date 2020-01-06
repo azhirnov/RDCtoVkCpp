@@ -269,6 +269,8 @@ namespace RDE
 		ND_ bool _IsSwapchainImage (VkResourceID id) const;
 
 		bool _CompileSource () const;
+
+		ND_ ArrayView<VkWriteDescriptorSet>  _ValidateDescriptors (ArrayView<VkWriteDescriptorSet> inSlots, uint chunkIndex);
 	};
 	
 	
@@ -879,7 +881,7 @@ namespace RDE
 			if ( info.bindCount == 0 )
 				continue;
 
-			auto&	slots = info.write;
+			auto	slots = _ValidateDescriptors( info.write, UMax );
 
 			nameSer.Clear();
 			remapper.SetCurrentPos( UMax );
@@ -903,6 +905,8 @@ namespace RDE
 			_initSrc << before << result;
 			before.clear();
 			result.clear();
+
+			_allocator.Discard();
 		}
 
 		_initialDS.clear();
@@ -1620,11 +1624,17 @@ namespace RDE
 
 		const String			shader_name = ToString( remapper.GetResourceUID( VK_OBJECT_TYPE_SHADER_MODULE, VkResourceID(*pShaderModule), chunkIndex )) << ".glsl";
 		VkShaderStageFlagBits	stage		= VK_SHADER_STAGE_FLAG_BITS_MAX_ENUM;
+		String					def_entry;
 
 		// save shader source
 		{
 			spirv_cross::CompilerGLSL			compiler{ pCreateInfo->pCode, pCreateInfo->codeSize/sizeof(uint) };
 			spirv_cross::CompilerGLSL::Options	opt		= {};
+
+			auto	entries = compiler.get_entry_points_and_stages();
+			CHECK_ERR( entries.size() == 1, void());
+
+			def_entry = entries.front().name;
 
 			opt.version					= 460;
 			opt.es						= false;
@@ -1679,7 +1689,8 @@ namespace RDE
 
 		result << "\tapp.CreateShaderModule( \"" << shader_name << "\", ";
 		result << Serialize_VkShaderStageFlagBits( stage ) << ", ";
-		result << "OUT " << remapper( VK_OBJECT_TYPE_SHADER_MODULE, *pShaderModule, true );
+		result << '"' << def_entry << "\", ";
+		result << remapper.GetResourceName( VK_OBJECT_TYPE_SHADER_MODULE, VkResourceID(*pShaderModule) );
 		result << " );\n";
 		
 		result << "\tapp.SetObjectName( "
@@ -1914,6 +1925,12 @@ namespace RDE
 
 			if ( remapper.IsResourceAlive( VK_OBJECT_TYPE_IMAGE, VkResourceID(dst.image), chunkIndex ))
 			{
+				if ( dst.oldLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR or
+					 dst.oldLayout == VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR )
+				{
+					dst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+				}
+
 				if ( dst.newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR or
 					 dst.newLayout == VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR )
 				{
@@ -2169,7 +2186,7 @@ namespace RDE
 		}
 		else
 		{
-			result << "\t// skip vkGetFenceStatus\n";
+			result << "\t// skip vkGetFenceStatus " << remapper.GetResourceName( VK_OBJECT_TYPE_FENCE, VkResourceID(fence) ) << "\n";
 			FlushGlobal();
 		}
 	}
@@ -2470,9 +2487,22 @@ namespace RDE
 */
 	void VulkanFnToCpp2::ResetEvent (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkEvent event)
 	{
-		VulkanFnToCpp::ResetEvent( chunkIndex, threadID, timestamp, device, event );
+		if ( not _signaledEvents.erase( VkResourceID(event) ))
+		{
+			if ( remapper.IsResourceAlive( VK_OBJECT_TYPE_EVENT, VkResourceID(event), chunkIndex ))
+			{
+				result << "\t// skip vkGetEventStatus " << remapper.GetResourceName( VK_OBJECT_TYPE_EVENT, VkResourceID(event) ) << "\n";
+			}
+			else
+			{
+				result << "\t// skip vkGetEventStatus\n";
+			}
 
-		_signaledEvents.erase( VkResourceID(event) );
+			FlushGlobal();
+			return;
+		}
+
+		VulkanFnToCpp::ResetEvent( chunkIndex, threadID, timestamp, device, event );
 	}
 	
 /*
@@ -2484,7 +2514,15 @@ namespace RDE
 	{
 		if ( not _signaledEvents.erase( VkResourceID(event) ))
 		{
-			result << "\t// skip vkGetEventStatus\n";
+			if ( remapper.IsResourceAlive( VK_OBJECT_TYPE_EVENT, VkResourceID(event), chunkIndex ))
+			{
+				result << "\t// skip vkGetEventStatus " << remapper.GetResourceName( VK_OBJECT_TYPE_EVENT, VkResourceID(event) ) << "\n";
+			}
+			else
+			{
+				result << "\t// skip vkGetEventStatus\n";
+			}
+
 			FlushGlobal();
 			return;
 		}
@@ -2700,127 +2738,189 @@ namespace RDE
 	
 /*
 =================================================
-	UpdateDescriptorSetWithTemplate
+	_ValidateDescriptors
 =================================================
 */
-	void VulkanFnToCpp2::UpdateDescriptorSetWithTemplate (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkDescriptorSet descriptorSet,
-														  VkDescriptorUpdateTemplate descriptorUpdateTemplate, ArrayView<VkWriteDescriptorSet> slots)
+	ArrayView<VkWriteDescriptorSet>  VulkanFnToCpp2::_ValidateDescriptors (ArrayView<VkWriteDescriptorSet> srcSlots, uint chunkIndex)
 	{
-	#if 1
-		
-		nameSer.Clear();
-		remapper.SetCurrentPos( chunkIndex );
-		before << "\t{\n";
-		
-		const String arr_name = nameSer.MakeUnique( slots.data(), "descriptorWrites"s, "writeDescriptorSet"s );
-		before << indent << "VkWriteDescriptorSet  " << arr_name << "[" << IntToString(uint(slots.size())) << "] = {};\n";
-		
-		for (size_t i = 0; i < slots.size(); ++i) {
-			Serialize2_VkWriteDescriptorSet( &slots[i], String(arr_name) << "[" << IntToString(i) << "]", nameSer, remapper, indent, INOUT result, INOUT before );
-		}
+		VkWriteDescriptorSet*	dst_slots		= _allocator.Alloc<VkWriteDescriptorSet>( srcSlots.size() );
+		size_t					dst_slot_count	= 0;
 
-		result << indent << "app.vkUpdateDescriptorSets( \n";
-		result << indent << "		/*device*/ " << remapper( VK_OBJECT_TYPE_DEVICE, _vkLogicalDevice ) << ",\n";
-		result << indent << "		/*descriptorWriteCount*/ " << IntToString(uint(slots.size())) << ",\n";
-		result << indent << "		/*pDescriptorWrites*/ " << nameSer.Get( slots.data() ) << ",\n";
-		result << indent << "		/*descriptorCopyCount*/ 0,\n";
-		result << indent << "		/*pDescriptorCopies*/ null );\n";
-		result << "\t}\n";
-
-		FlushGlobal();
-
-	#else
-		nameSer.Clear();
-		remapper.SetCurrentPos( chunkIndex );
-
-		auto	iter = _dsTemplates.find( descriptorUpdateTemplate );
-		CHECK_ERR( iter != _dsTemplates.end(), void());
-
-		before << "\t{\n";
-
-		size_t	data_size	= 0;
-		size_t	data_align	= 0;
-
-		for (auto& entry : iter->second.entries)
+		// validation
+		for (size_t i = 0; i < srcSlots.size(); ++i)
 		{
-			/*BEGIN_ENUM_CHECKS();
-			switch ( entry.descriptorType )
+			auto&	src			= srcSlots[i];
+			auto&	dst			= dst_slots[ dst_slot_count ];
+			bool	is_valid	= true;
+
+			dst = src;
+			dst.descriptorCount = 0;
+			dst.pImageInfo		= null;
+			dst.pTexelBufferView= null;
+			dst.pBufferInfo		= null;
+
+			BEGIN_ENUM_CHECKS();
+			switch ( dst.descriptorType )
 			{
 				case VK_DESCRIPTOR_TYPE_SAMPLER :
+				{
+					auto*	img = _allocator.Alloc<VkDescriptorImageInfo>( src.descriptorCount );
+
+					for (uint j = 0; j < src.descriptorCount; ++j)
+					{
+						if ( not remapper.IsResourceAlive( VK_OBJECT_TYPE_SAMPLER, VkResourceID(src.pImageInfo[j].sampler), chunkIndex ))
+						{
+							FG_LOGI( "Skiped unknown resource SamplerID("s << ToString(VkResourceID(src.pImageInfo[j].sampler)) << ")" );
+							continue;
+						}
+
+						img[dst.descriptorCount].sampler	= src.pImageInfo[j].sampler;
+						img[dst.descriptorCount].imageView	= VK_NULL_HANDLE;
+						img[dst.descriptorCount].imageLayout= VK_IMAGE_LAYOUT_UNDEFINED;
+						++dst.descriptorCount;
+					}
+
+					dst.pImageInfo = img;
+					break;
+				}
+
 				case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER :
+				{
+					auto*	img = _allocator.Alloc<VkDescriptorImageInfo>( src.descriptorCount );
+
+					for (uint j = 0; j < src.descriptorCount; ++j)
+					{
+						if ( not remapper.IsResourceAlive( VK_OBJECT_TYPE_SAMPLER, VkResourceID(src.pImageInfo[j].sampler), chunkIndex ))
+						{
+							FG_LOGI( "Skiped unknown resource SamplerID("s << ToString(VkResourceID(src.pImageInfo[j].sampler)) << ")" );
+							continue;
+						}
+						if ( not remapper.IsResourceAlive( VK_OBJECT_TYPE_IMAGE_VIEW, VkResourceID(src.pImageInfo[j].imageView), chunkIndex ))
+						{
+							FG_LOGI( "Skiped unknown resource ImageViewID("s << ToString(VkResourceID(src.pImageInfo[j].imageView)) << ")" );
+							continue;
+						}
+
+						img[dst.descriptorCount++] = src.pImageInfo[j];
+					}
+
+					dst.pImageInfo = img;
+					break;
+				}
+
 				case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE :
 				case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE :
 				case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT :
 				{
-					const size_t	stride = Max( entry.stride, sizeof(VkDescriptorImageInfo) );
-					data_size	= Max( data_size, entry.offset + stride * entry.descriptorCount );
-					data_align	= Max( data_align, alignof(VkDescriptorImageInfo) );
+					auto*	img = _allocator.Alloc<VkDescriptorImageInfo>( src.descriptorCount );
 
-					for (uint i = 0; i < entry.descriptorCount; ++i)
+					for (uint j = 0; j < src.descriptorCount; ++j)
 					{
-						auto*	data = static_cast<const VkDescriptorImageInfo *>( pData + BytesU{entry.offset + stride*i} );
-						result << indent << "static_cast<VkDescriptorImageInfo *>(pData + " << ToString(entry.offset + stride*i) << "_b) = { "
-							<< remapper.GetResource( VK_OBJECT_TYPE_SAMPLER, VkResourceID(data->sampler) ) << ", "
-							<< remapper.GetResource( VK_OBJECT_TYPE_IMAGE_VIEW, VkResourceID(data->imageView) ) << ", "
-							<< Serialize_VkImageLayout( data->imageLayout ) << " };\n";
+						if ( not remapper.IsResourceAlive( VK_OBJECT_TYPE_IMAGE_VIEW, VkResourceID(src.pImageInfo[j].imageView), chunkIndex ))
+						{
+							FG_LOGI( "Skiped unknown resource ImageViewID("s << ToString(VkResourceID(src.pImageInfo[j].imageView)) << ")" );
+							continue;
+						}
+
+						img[dst.descriptorCount] = src.pImageInfo[j];
+						img[dst.descriptorCount].sampler = VK_NULL_HANDLE;
+						++dst.descriptorCount;
 					}
+
+					dst.pImageInfo = img;
 					break;
 				}
+
 				case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER :
 				case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER :
 				{
-					const size_t	stride = Max( entry.stride, sizeof(VkBufferView) );
-					data_size	= Max( data_size, entry.offset + stride * entry.descriptorCount );
-					data_align	= Max( data_align, alignof(VkBufferView) );
-					
-					for (uint i = 0; i < entry.descriptorCount; ++i)
+					auto*	texel_buf = _allocator.Alloc<VkBufferView>( src.descriptorCount );
+
+					for (uint j = 0; j < src.descriptorCount; ++j)
 					{
-						auto*	data = static_cast<const VkBufferView *>( pData + BytesU{entry.offset + stride*i} );
-						result << indent << "static_cast<VkBufferView *>(pData + " << ToString(entry.offset + stride*i) << "_b) = "
-							<< remapper.GetResource( VK_OBJECT_TYPE_BUFFER_VIEW, VkResourceID(*data) ) << ";\n";
+						if ( not remapper.IsResourceAlive( VK_OBJECT_TYPE_BUFFER_VIEW, VkResourceID(src.pTexelBufferView[j]), chunkIndex ))
+						{
+							FG_LOGI( "Skiped unknown resource BufferViewID("s << ToString(VkResourceID(src.pTexelBufferView[j])) << ")" );
+							continue;
+						}
+
+						texel_buf[dst.descriptorCount++] = src.pTexelBufferView[j];
 					}
+
+					dst.pTexelBufferView = texel_buf;
 					break;
 				}
+
 				case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER :
 				case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER :
 				case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC :
 				case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC :
 				{
-					const size_t	stride = Max( entry.stride, sizeof(VkDescriptorBufferInfo) );
-					data_size	= Max( data_size, entry.offset + stride * entry.descriptorCount );
-					data_align	= Max( data_align, alignof(VkDescriptorBufferInfo) );
-					
-					for (uint i = 0; i < entry.descriptorCount; ++i)
+					auto*	buf = _allocator.Alloc<VkDescriptorBufferInfo>( src.descriptorCount );
+
+					for (uint j = 0; j < src.descriptorCount; ++j)
 					{
-						auto*	data = static_cast<const VkDescriptorBufferInfo *>( pData + BytesU{entry.offset + stride*i} );
-						result << indent << "static_cast<VkDescriptorBufferInfo *>(pData + " << ToString(entry.offset + stride*i) << "_b) = { "
-							<< remapper.GetResource( VK_OBJECT_TYPE_BUFFER, VkResourceID(data->buffer) ) << ", "
-							<< IntToString(data->offset) << ", "
-							<< IntToString(data->range)	<< "};\n";
+						if ( not remapper.IsResourceAlive( VK_OBJECT_TYPE_BUFFER, VkResourceID(src.pBufferInfo[j].buffer), chunkIndex ))
+						{
+							FG_LOGI( "Skiped unknown resource BufferID("s << ToString(VkResourceID(src.pBufferInfo[j].buffer)) << ")" );
+							continue;
+						}
+
+						buf[dst.descriptorCount++] = src.pBufferInfo[j];
 					}
+
+					dst.pBufferInfo = buf;
 					break;
 				}
+
 				case VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK_EXT :
 				case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV :
 				case VK_DESCRIPTOR_TYPE_RANGE_SIZE :
 				case VK_DESCRIPTOR_TYPE_MAX_ENUM :
-					CHECK( !"not supported" );
+				default :
+					is_valid = false;
 					break;
 			}
-			END_ENUM_CHECKS();*/
+			END_ENUM_CHECKS();
+
+			if ( dst.descriptorCount > 0 and is_valid )
+				++dst_slot_count;
 		}
 
-		before << indent << "alignof(" << ToString(data_align) << ") uint64_t storage[(" << ToString(data_size) << " + sizeof(uint64_t)) / sizeof(uint64_t)];\n";
-		before << indent << "void* pData = static_cast<void*>(storage);\n";
+		return ArrayView<VkWriteDescriptorSet>{ dst_slots, dst_slot_count };
+	}
+	
+/*
+=================================================
+	UpdateDescriptorSetWithTemplate
+=================================================
+*/
+	void VulkanFnToCpp2::UpdateDescriptorSetWithTemplate (uint chunkIndex, uint64_t threadID, uint64_t timestamp, VkDevice device, VkDescriptorSet descriptorSet,
+														  VkDescriptorUpdateTemplate descriptorUpdateTemplate, ArrayView<VkWriteDescriptorSet> srcSlots)
+	{
+		auto	dst_slots = _ValidateDescriptors( srcSlots, chunkIndex );
+		
+		nameSer.Clear();
+		remapper.SetCurrentPos( chunkIndex );
+		before << "\t{\n";
+		
+		const String arr_name = nameSer.MakeUnique( dst_slots.data(), "descriptorWrites"s, "writeDescriptorSet"s );
+		before << indent << "VkWriteDescriptorSet  " << arr_name << "[" << IntToString(uint(dst_slots.size())) << "] = {};\n";
+		
+		for (size_t i = 0; i < dst_slots.size(); ++i) {
+			Serialize2_VkWriteDescriptorSet( &dst_slots[i], String(arr_name) << "[" << IntToString(i) << "]", nameSer, remapper, indent, INOUT result, INOUT before );
+		}
 
-		result << indent <<  "app.vkUpdateDescriptorSetWithTemplate( " << remapper.GetResource( VK_OBJECT_TYPE_DEVICE, VkResourceID(device) ) << ", ";
-		result << indent << remapper.GetResource( VK_OBJECT_TYPE_DESCRIPTOR_SET, VkResourceID(descriptorSet) ) << ", ";
-		result << indent << remapper.GetResource( VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE, VkResourceID(descriptorUpdateTemplate) ) << ", ";
-		result << indent << "pData ));\n";
+		result << indent << "app.vkUpdateDescriptorSets( \n";
+		result << indent << "		/*device*/ " << remapper( VK_OBJECT_TYPE_DEVICE, _vkLogicalDevice ) << ",\n";
+		result << indent << "		/*descriptorWriteCount*/ " << IntToString(uint(dst_slots.size())) << ",\n";
+		result << indent << "		/*pDescriptorWrites*/ " << nameSer.Get( dst_slots.data() ) << ",\n";
+		result << indent << "		/*descriptorCopyCount*/ 0,\n";
+		result << indent << "		/*pDescriptorCopies*/ null );\n";
 		result << "\t}\n";
 
 		FlushGlobal();
-	#endif
+		_allocator.Discard();
 	}
 //-----------------------------------------------------------------------------
 

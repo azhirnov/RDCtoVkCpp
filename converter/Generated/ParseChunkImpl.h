@@ -1266,13 +1266,13 @@ bool RdCaptureReader::Parse_vkCmdUpdateBuffer (const Node_t &root, uint64_t thre
 	Node_t* dstBuffer_node = _FindByAttribName( root, "destBuffer" );
 	VkBuffer  dstBuffer = {};
 	_ParseResource( dstBuffer_node, OUT dstBuffer );
-	Node_t* dstOffset_node = _FindByAttribName( root, "dstOffset" );
+	Node_t* dstOffset_node = _FindByAttribName( root, "destOffset" );
 	VkDeviceSize  dstOffset = {};
 	_ParseValue( dstOffset_node, OUT dstOffset );
 	Node_t* dataSize_node = _FindByAttribName( root, "dataSize" );
 	VkDeviceSize  dataSize = {};
 	_ParseValue( dataSize_node, OUT dataSize );
-	Node_t* pData_node = _FindByAttribName( root, "pData" );
+	Node_t* pData_node = _FindByAttribName( root, "Data" );
 	void *  pData = {};
 	_ParseArray( pData_node, OUT const_cast<void * &>(pData), INOUT dataSize );
 	for (auto listener : _listeners) {
@@ -1480,10 +1480,10 @@ bool RdCaptureReader::Parse_vkCmdCopyQueryPoolResults (const Node_t &root, uint6
 	Node_t* dstBuffer_node = _FindByAttribName( root, "destBuffer" );
 	VkBuffer  dstBuffer = {};
 	_ParseResource( dstBuffer_node, OUT dstBuffer );
-	Node_t* dstOffset_node = _FindByAttribName( root, "dstOffset" );
+	Node_t* dstOffset_node = _FindByAttribName( root, "destOffset" );
 	VkDeviceSize  dstOffset = {};
 	_ParseValue( dstOffset_node, OUT dstOffset );
-	Node_t* stride_node = _FindByAttribName( root, "stride" );
+	Node_t* stride_node = _FindByAttribName( root, "destStride" );
 	VkDeviceSize  stride = {};
 	_ParseValue( stride_node, OUT stride );
 	Node_t* flags_node = _FindByAttribName( root, "flags" );
@@ -1600,7 +1600,7 @@ bool RdCaptureReader::Parse_vkCmdWaitEvents (const Node_t &root, uint64_t thread
 	Node_t* srcStageMask_node = _FindByAttribName( root, "srcStageMask" );
 	VkPipelineStageFlags  srcStageMask = {};
 	_ParseValue( srcStageMask_node, OUT srcStageMask );
-	Node_t* dstStageMask_node = _FindByAttribName( root, "destStageMask" );
+	Node_t* dstStageMask_node = _FindByAttribName( root, "dstStageMask" );
 	VkPipelineStageFlags  dstStageMask = {};
 	_ParseValue( dstStageMask_node, OUT dstStageMask );
 	Node_t* memoryBarrierCount_node = _FindByAttribName( root, "memoryBarrierCount" );

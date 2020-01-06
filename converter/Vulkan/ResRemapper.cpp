@@ -303,6 +303,9 @@ namespace RDE
 */
 	bool  ResRemapper::IsResourceAlive (EResourceType type, VkResourceID id, uint chunkIndex) const
 	{
+		if ( id == 0 )
+			return false;
+
 		auto	res_iter = _resources.find( type );
 		if ( res_iter == _resources.end() )
 			return false;

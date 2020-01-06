@@ -31,12 +31,12 @@ namespace RDE
 		name_remapping["pCreateInfos"]			= "CreateInfo";
 		name_remapping["pPipelines"]			= "Pipeline";
 		name_remapping["pBeginInfo"]			= "BeginInfo";
-		name_remapping["dstStageMask"]			= "destStageMask";
 		name_remapping["dstBuffer"]				= "destBuffer";
 		name_remapping["pRenderPassBegin"]		= "RenderPassBegin";
 		name_remapping["descriptorSetCount"]	= "setCount";
 		name_remapping["dstImage"]				= "destImage";
 		name_remapping["dstImageLayout"]		= "destImageLayout";
+		name_remapping["dstOffset"]				= "destOffset";
 
 		name_remapping["vkCmdBindDescriptorSets_pDescriptorSets"]	= "pDescriptorSets";
 		name_remapping["vkAllocateDescriptorSets_pDescriptorSets"]	= "DescriptorSet";
@@ -56,6 +56,9 @@ namespace RDE
 		name_remapping["vkCmdPushConstants_offset"]					= "start";
 		name_remapping["vkCmdPushConstants_size"]					= "length";
 		name_remapping["vkCmdPushConstants_pValues"]				= "values";
+		name_remapping["vkCmdUpdateBuffer_pData"]					= "Data";
+		name_remapping["vkCmdPipelineBarrier_dstStageMask"]			= "destStageMask";
+		name_remapping["vkCmdCopyQueryPoolResults_stride"]			= "destStride";
 		
 
 		for (auto& packet : _packetIDs)

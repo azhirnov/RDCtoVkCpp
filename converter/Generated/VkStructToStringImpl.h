@@ -4777,7 +4777,7 @@ void  Serialize2_VkPipelineShaderStageCreateInfo (const VkPipelineShaderStageCre
 	result << indent << name << ".flags = " << Serialize_VkPipelineShaderStageCreateFlags(obj->flags) << ";\n";
 	result << indent << name << ".stage = " << Serialize_VkShaderStageFlagBits(obj->stage) << ";\n";
 	result << indent << name << ".module = " << remapper( VK_OBJECT_TYPE_SHADER_MODULE, obj->module ) << ";\n";
-	result << indent << name << ".pName = " << '"' << obj->pName << '"' << ";\n";
+	result << indent << name << ".pName = app.GetShaderEntry(" << remapper.GetResourceName( VK_OBJECT_TYPE_SHADER_MODULE, VkResourceID(obj->module) ) << ");\n";
 	result << indent << name << ".pSpecializationInfo = " << nameSer.GetPtr(obj->pSpecializationInfo) << ";\n";
 }
 

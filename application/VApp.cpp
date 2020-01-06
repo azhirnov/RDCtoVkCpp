@@ -252,11 +252,28 @@ void  VApp::SetShaderFolder (StringView folder)
 
 /*
 =================================================
+	GetShaderEntry
+=================================================
+*/
+const char*  VApp::GetShaderEntry (ShaderModuleID id) const
+{
+	if ( size_t(id) < _shaderEntries.size() and _shaderEntries[size_t(id)] != null )
+	{
+		return _shaderEntries[size_t(id)];
+	}
+	CHECK( false );
+	return "";
+}
+
+/*
+=================================================
 	CreateShaderModule
 =================================================
 */
-bool  VApp::CreateShaderModule (StringView name, VkShaderStageFlagBits stage, OUT VkShaderModule &module) const
+bool  VApp::CreateShaderModule (StringView name, VkShaderStageFlagBits stage, const char* originEntry, ShaderModuleID id) const
 {
+	CHECK_ERR( size_t(id) < _shaderEntries.size() );
+
 	// read shader source
 	{
 		FileRStream		file{ FS::path{_shaderFolder}.append( name )};
@@ -291,7 +308,8 @@ bool  VApp::CreateShaderModule (StringView name, VkShaderStageFlagBits stage, OU
 			case VK_SHADER_STAGE_MESH_BIT_NV :					lang = EShLanguage::EShLangMeshNV;			break;
 
 			case VK_SHADER_STAGE_ALL_GRAPHICS :
-			case VK_SHADER_STAGE_ALL :							CHECK(false);	break;
+			case VK_SHADER_STAGE_ALL :
+			default :											CHECK(false);	break;
 		}
 		END_ENUM_CHECKS();
 
@@ -302,6 +320,12 @@ bool  VApp::CreateShaderModule (StringView name, VkShaderStageFlagBits stage, OU
 			FileRStream		file{ FS::path{_shaderFolder}.append( name ).replace_extension( "spv" )};
 			CHECK_ERR( file.IsOpen() );
 			CHECK_ERR( file.Read( size_t(file.RemainingSize()) / sizeof(_spvBuffer[0]), OUT _spvBuffer ));
+
+			_shaderEntries[size_t(id)] = originEntry;
+		}
+		else
+		{
+			_shaderEntries[size_t(id)] = "main";
 		}
 	}
 
@@ -313,7 +337,7 @@ bool  VApp::CreateShaderModule (StringView name, VkShaderStageFlagBits stage, OU
 		ci.flags	= 0;
 		ci.codeSize	= _spvBuffer.size() * sizeof(_spvBuffer[0]);
 		ci.pCode	= _spvBuffer.data();
-		VK_CHECK( vkCreateShaderModule( _vulkan.GetVkDevice(), &ci, null, OUT &module ));
+		VK_CHECK( vkCreateShaderModule( _vulkan.GetVkDevice(), &ci, null, OUT &EditResource( id ) ));
 	}
 	return true;
 }
@@ -551,7 +575,7 @@ bool  VApp::_LoadContent () const
 	TaskQueue_t			task_queue;		task_queue.reserve( total );
 	std::atomic<size_t>	counter			{0};
 	std::atomic<size_t>	read_pos		{0};
-	const uint			thread_count	= Max( 2u, std::thread::hardware_concurrency() ) - 1;
+	const uint			thread_count	= Max( 1u, std::thread::hardware_concurrency() );
 	Array<std::thread>	threads;		threads.reserve( thread_count );
 
 
@@ -561,7 +585,7 @@ bool  VApp::_LoadContent () const
 			task_queue.push_back(
 				[this, &name, &buf] (std::atomic<size_t> &counter, size_t total, void* arch) {
 					bool res = _LoadBuffer( arch, name, INOUT buf );
-					auto cnt = counter.fetch_add( 1 );
+					auto cnt = counter.fetch_add( 1 ) + 1;
 					FG_LOGI( "Loaded buffer: '"s << StringView{name} << "', " << ToString(cnt) << " of " << ToString(total) );
 					return res;
 				});
@@ -570,7 +594,7 @@ bool  VApp::_LoadContent () const
 			task_queue.push_back(
 				[this, &name, &img] (std::atomic<size_t> &counter, size_t total, void* arch) {
 					bool res = _LoadImage( arch, name, INOUT img );
-					auto cnt = counter.fetch_add( 1 );
+					auto cnt = counter.fetch_add( 1 ) + 1;
 					FG_LOGI( "Loaded image: '"s << StringView{name} << "', " << ToString(cnt) << " of " << ToString(total) );
 					return res;
 				});
@@ -579,7 +603,7 @@ bool  VApp::_LoadContent () const
 			task_queue.push_back(
 				[this, &name, &mem] (std::atomic<size_t> &counter, size_t total, void* arch) {
 					bool res = _LoadMemory( arch, name, INOUT mem );
-					auto cnt = counter.fetch_add( 1 );
+					auto cnt = counter.fetch_add( 1 ) + 1;
 					FG_LOGI( "Loaded host memory: '"s << StringView{name} << "', " << ToString(cnt) << " of " << ToString(total) );
 					return res;
 				});
